@@ -50,6 +50,26 @@ echo ""
 cat "$DEMO_DIR/manifests/trigger.yaml"
 echo ""
 
+section "What changes in Step 3 (apply mode)"
+
+info "Step 3 uses a separate trigger manifest with dry-run=false and a GatewayClass override."
+info "Here is the diff of the annotation blocks (dry-run → apply):"
+echo ""
+
+if command -v diff >/dev/null 2>&1; then
+  diff -u \
+    <(sed -n '/^  annotations:/,/^data:/p' "$DEMO_DIR/manifests/trigger.yaml") \
+    <(sed -n '/^  annotations:/,/^data:/p' "$DEMO_DIR/manifests/trigger-apply.yaml") \
+    || true
+else
+  warn "diff not found; showing both annotation blocks instead."
+  printf '\n--- trigger.yaml (dry-run) annotations ---\n'
+  sed -n '/^  annotations:/,/^data:/p' "$DEMO_DIR/manifests/trigger.yaml"
+  printf '\n--- trigger-apply.yaml (apply) annotations ---\n'
+  sed -n '/^  annotations:/,/^data:/p' "$DEMO_DIR/manifests/trigger-apply.yaml"
+fi
+echo ""
+
 wait_for_enter
 
 info "Applying the trigger ConfigMap..."

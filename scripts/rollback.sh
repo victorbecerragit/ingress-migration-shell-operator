@@ -25,11 +25,17 @@ CONTEXT_FILE="$BINDING_CONTEXT_PATH"
 jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
   EVENT_TYPE=$(echo "$event" | jq -r '.type')
   if [[ "$EVENT_TYPE" == "Synchronization" ]] || [[ "$EVENT_TYPE" == "Event" ]]; then
-     CM_NAME=$(echo "$event" | jq -r '.object.metadata.name')
-     CM_NAMESPACE=$(echo "$event" | jq -r '.object.metadata.namespace')
+     CM_NAME=$(echo "$event" | jq -r '.object.metadata.name // empty')
+     CM_NAMESPACE=$(echo "$event" | jq -r '.object.metadata.namespace // empty')
+
+     # Defensive: skip malformed payloads without a ConfigMap object.
+     if [[ -z "$CM_NAME" || -z "$CM_NAMESPACE" ]]; then
+       echo "Skipping event without ConfigMap object (type=$EVENT_TYPE)"
+       continue
+     fi
      NS_SELECTOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/namespace-selector"] // ""')
      
-     echo "Rolling back HTTPRoutes triggered by $CM_NAME..."
+    echo "Rolling back HTTPRoutes triggered by $CM_NAME/$CM_NAMESPACE..."
      
      if [ -n "$NS_SELECTOR" ]; then
          ROUTES=$(kubectl get httproute -l "$NS_SELECTOR" -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' || true)

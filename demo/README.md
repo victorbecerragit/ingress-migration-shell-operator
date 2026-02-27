@@ -15,7 +15,7 @@ Based on the Kubernetes blog post:
 | 0 | `setup.sh` | Kind cluster + cloud-provider-kind + ingress-nginx installed |
 | 1 | `01-ingress.sh` | App running behind NGINX Ingress — `curl` returns JSON |
 | 2 | `02-dry-run.sh` | Migration operator triggered in **dry-run** mode — shows generated `Gateway` + `HTTPRoute` YAML |
-| 3 | `03-apply.sh` | Resources applied, Gateway gets an IP, **same `curl` works via Gateway API** |
+| 3 | `03-apply.sh` | Operator triggered with **dry-run=false** — resources applied, Gateway gets an IP, **same `curl` works via Gateway API** |
 | — | `teardown.sh` | Full cleanup — one command |
 
 ---
@@ -93,11 +93,33 @@ bash demo/teardown.sh
 
 ---
 
+## Troubleshooting
+
+### Gateway/HTTPRoute appear even in dry-run
+
+This demo uses `spec.ingressClassName: nginx` in `demo/manifests/ingress.yaml`.
+In some environments, an Ingress without `spec.ingressClassName` may be treated
+as a "default" Ingress and can trigger automatic Gateway API translation by the
+cluster. That can make it look like the migration operator applied resources
+even in dry-run.
+
+If you see `Gateway`/`HTTPRoute` created unexpectedly:
+- Verify the Ingress has `spec.ingressClassName: nginx`
+- Delete any auto-created resources: `kubectl delete gateway,httproute -n demo-prod --all`
+```
+
+---
+
 ## How it works under the hood
 
 ### The trigger ConfigMap
 
-`demo/manifests/trigger.yaml` is a ConfigMap with a special label:
+The demo uses two trigger manifests:
+
+- `demo/manifests/trigger.yaml` — **dry-run=true** (inspect only)
+- `demo/manifests/trigger-apply.yaml` — **dry-run=false** (live apply)
+
+Both are ConfigMaps with a special label:
 
 ```yaml
 labels:
@@ -106,6 +128,10 @@ annotations:
   ingress-migration.flant.com/providers: "ingress-nginx"
   ingress-migration.flant.com/dry-run: "true"          # start safe
   ingress-migration.flant.com/namespace-selector: "env=prod"
+
+# (Apply mode only)
+# ingress-migration.flant.com/dry-run: "false"
+# ingress-migration.flant.com/gateway-class: "cloud-provider-kind"
 ```
 
 When the shell-operator sees this ConfigMap it runs `scripts/migrate.sh`,
@@ -141,12 +167,15 @@ spec:
 ### GatewayClass adaptation
 
 `ingress2gateway` generates `gatewayClassName: nginx` (inherits the IngressClass
-name). In `03-apply.sh` we patch this at apply time:
+name). For Kind, the real GatewayClass is `cloud-provider-kind`, so in apply mode
+we set this on the trigger ConfigMap and the operator overrides `gatewayClassName`
+before applying:
 
-```bash
-ingress2gateway print --providers=ingress-nginx --namespace=demo-prod \
-  | sed 's/gatewayClassName: nginx/gatewayClassName: cloud-provider-kind/' \
-  | kubectl apply -f -
+```yaml
+metadata:
+  annotations:
+    ingress-migration.flant.com/dry-run: "false"
+    ingress-migration.flant.com/gateway-class: "cloud-provider-kind"
 ```
 
 In a real cluster you would match the `gatewayClassName` to whichever
@@ -178,5 +207,6 @@ demo/
 └── manifests/
     ├── app.yaml           ← Namespace (env=prod) + Deployment + Service
     ├── ingress.yaml       ← NGINX Ingress rule
-    └── trigger.yaml       ← Migration operator trigger ConfigMap
+  ├── trigger.yaml       ← Trigger ConfigMap (dry-run=true)
+  └── trigger-apply.yaml ← Trigger ConfigMap (dry-run=false)
 ```

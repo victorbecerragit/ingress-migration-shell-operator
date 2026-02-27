@@ -26,8 +26,14 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
   EVENT_TYPE=$(echo "$event" | jq -r '.type')
   if [[ "$EVENT_TYPE" == "Synchronization" ]] || [[ "$EVENT_TYPE" == "Event" ]]; then
      echo "Validating converted HTTPRoutes..."
-     CM_NAME=$(echo "$event" | jq -r '.object.metadata.name')
-     CM_NAMESPACE=$(echo "$event" | jq -r '.object.metadata.namespace')
+     CM_NAME=$(echo "$event" | jq -r '.object.metadata.name // empty')
+     CM_NAMESPACE=$(echo "$event" | jq -r '.object.metadata.namespace // empty')
+
+     # Defensive: skip malformed payloads without a ConfigMap object.
+     if [[ -z "$CM_NAME" || -z "$CM_NAMESPACE" ]]; then
+       echo "Skipping event without ConfigMap object (type=$EVENT_TYPE)"
+       continue
+     fi
      
      # Future Validation logic placeholder: Check if HTTPRoutes exist and mirror endpoints
      # Right now we just mark success if run.

@@ -27,11 +27,18 @@ echo "Processing hook context from $CONTEXT_FILE"
 jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
   EVENT_TYPE=$(echo "$event" | jq -r '.type')
   if [[ "$EVENT_TYPE" == "Synchronization" ]] || [[ "$EVENT_TYPE" == "Event" ]]; then
-    CM_NAME=$(echo "$event" | jq -r '.object.metadata.name')
-    CM_NAMESPACE=$(echo "$event" | jq -r '.object.metadata.namespace')
+        CM_NAME=$(echo "$event" | jq -r '.object.metadata.name // empty')
+        CM_NAMESPACE=$(echo "$event" | jq -r '.object.metadata.namespace // empty')
+
+        # Defensive: in some edge-cases shell-operator can produce events without an object.
+        # Avoid retry loops by skipping those payloads.
+        if [[ -z "$CM_NAME" || -z "$CM_NAMESPACE" ]]; then
+            echo "Skipping event without ConfigMap object (type=$EVENT_TYPE)"
+            continue
+        fi
     
     # Read annotations configured by the user
-    PROVIDERS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/providers"] // "ingress-nginx,kong"')
+    PROVIDERS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/providers"] // "ingress-nginx"')
     DRY_RUN=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/dry-run"] // "true"')
     NS_SELECTOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/namespace-selector"] // ""')
     MIGRATE_ENDPOINTS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/migrate-endpoints"] // "false"')

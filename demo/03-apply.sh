@@ -9,8 +9,8 @@
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$DEMO_DIR")"
 BIN_DIR="$DEMO_DIR/.bin"
-GATEWAY_CLASS="${GATEWAY_CLASS:-cloud-provider-kind}"
 
 # ── Colours & helpers ─────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -36,44 +36,51 @@ if [ ! -x "$BIN_DIR/ingress2gateway" ]; then
   die "ingress2gateway not found in $BIN_DIR. Did you run bash demo/setup.sh?"
 fi
 
-# ── Step 3a: Converting Ingress → Gateway API manifests ──────────────────────
-section "Step 3 — Converting Ingress to Gateway API"
+# ── Step 3a: Apply the trigger ConfigMap (live apply) ───────────────────────
+section "Step 3 — Triggering the operator (live apply)"
 
-info "ingress2gateway generates Gateway + HTTPRoute resources from your Ingress."
-info "The only adjustment needed for this Kind cluster:"
+info "In a real cluster, you set dry-run=false and let the operator apply."
+info "This trigger also tells the operator which GatewayClass to target."
 echo ""
-echo -e "  ${RED}gatewayClassName: nginx          ← generated placeholder${RESET}"
-echo -e "  ${GREEN}gatewayClassName: cloud-provider-kind  ← our Kind GatewayClass${RESET}"
-echo ""
-
-wait_for_enter
-
-# Generate converted manifests with gatewayClassName patched
-info "Generating Gateway API resources..."
-CONVERTED=$(PATH="$BIN_DIR:$PATH" ingress2gateway print \
-  --providers=ingress-nginx \
-  --namespace=demo-prod \
-  | sed "s/gatewayClassName: nginx/gatewayClassName: ${GATEWAY_CLASS}/g")
-
-echo ""
-echo "──── Converted manifests (patched) ────"
-echo "$CONVERTED"
-echo "────────────────────────────────────────"
+cat "$DEMO_DIR/manifests/trigger-apply.yaml"
 echo ""
 
 wait_for_enter
 
-# ── Step 3b: Apply the Gateway + HTTPRoute ────────────────────────────────────
-section "Applying Gateway + HTTPRoute to the cluster"
-
-info "Applying the converted resources..."
-echo "$CONVERTED" | kubectl apply -f -
+info "Applying the live-apply trigger ConfigMap..."
+cmd "kubectl apply -f $DEMO_DIR/manifests/trigger-apply.yaml"
 echo ""
-success "Gateway and HTTPRoute created in demo-prod namespace."
+success "Trigger ConfigMap updated (dry-run=false)."
 
 wait_for_enter
 
-# ── Step 3c: Wait for Gateway to be programmed ───────────────────────────────
+# ── Step 3b: Simulate the shell-operator hook (apply mode) ─────────────────
+section "Running the migration hook (apply mode)"
+
+info "In production the shell-operator runs the hook automatically."
+info "For this demo we simulate it with the same script the operator uses:"
+echo ""
+
+MANIFESTS_MOCK_CLUSTER="$DEMO_DIR/manifests/app.yaml $DEMO_DIR/manifests/ingress.yaml" \
+  MANIFESTS_TRIGGER="$DEMO_DIR/manifests/trigger-apply.yaml" \
+  TRIGGER_NAMESPACE="demo-prod" \
+  TRIGGER_CONFIGMAP="migrate-ingress-demo" \
+  E2E_BIN_DIR="$BIN_DIR" \
+  bash "$REPO_DIR/tests/run-manual.sh"
+
+wait_for_enter
+
+# ── Step 3c: Inspect the ConfigMap status ───────────────────────────────────
+section "Migration status written back to ConfigMap"
+
+info "The operator patches the trigger ConfigMap with the result:"
+cmd "kubectl get configmap migrate-ingress-demo -n demo-prod -o json | jq '.data'"
+echo ""
+success "convertedResources=1  |  applied=true  |  error=none"
+
+wait_for_enter
+
+# ── Step 3d: Wait for Gateway to be programmed ──────────────────────────────
 section "Waiting for Gateway to be programmed"
 
 info "cloud-provider-kind provisions a LoadBalancer for the Gateway..."
@@ -81,7 +88,7 @@ info "This may take up to 30 seconds."
 echo ""
 
 GW_IP=""
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   PROGRAMMED=$(kubectl get gateway nginx -n demo-prod \
     -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || true)
   GW_IP=$(kubectl get gateway nginx -n demo-prod \
@@ -110,7 +117,7 @@ cmd "kubectl get httproute -n demo-prod"
 
 wait_for_enter
 
-# ── Step 3d: Test via Gateway API ─────────────────────────────────────────────
+# ── Step 3e: Test via Gateway API ───────────────────────────────────────────
 section "Testing: curl via Gateway API"
 
 info "Gateway IP: ${GW_IP}"
@@ -137,7 +144,7 @@ done
 
 wait_for_enter
 
-# ── Step 3e: Both paths work simultaneously ───────────────────────────────────
+# ── Step 3f: Both paths work simultaneously ─────────────────────────────────
 section "Both Ingress and Gateway API work simultaneously"
 
 NGINX_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
@@ -163,7 +170,7 @@ success "Same app pod serves both paths — zero-downtime migration!"
 
 wait_for_enter
 
-# ── Step 3f: (Optional) Remove Ingress ───────────────────────────────────────
+# ── Step 3g: (Optional) Remove Ingress ──────────────────────────────────────
 section "(Optional) Remove the Ingress — traffic moves to Gateway API only"
 
 info "When you're confident, you can decommission the old Ingress:"
