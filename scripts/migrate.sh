@@ -35,8 +35,9 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     DRY_RUN=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/dry-run"] // "true"')
     NS_SELECTOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/namespace-selector"] // ""')
     MIGRATE_ENDPOINTS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/migrate-endpoints"] // "false"')
+    GATEWAY_CLASS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/gateway-class"] // ""')
 
-    echo "Migration Triggered: $CM_NAMESPACE/$CM_NAME (DryRun: $DRY_RUN, Providers: $PROVIDERS, Selector: $NS_SELECTOR, MigrateEndpoints: $MIGRATE_ENDPOINTS)"
+    echo "Migration Triggered: $CM_NAMESPACE/$CM_NAME (DryRun: $DRY_RUN, Providers: $PROVIDERS, Selector: $NS_SELECTOR, MigrateEndpoints: $MIGRATE_ENDPOINTS, GatewayClass: ${GATEWAY_CLASS:-<default>})"
 
     # Gather namespaces based on selector
     TARGET_NAMESPACES=""
@@ -82,7 +83,21 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
             ERROR_MSG="generation_failed"
             return 1
         }
-        
+
+        # Override gatewayClassName if the trigger specifies a target class
+        if [ -n "${GATEWAY_CLASS:-}" ]; then
+            OUT=$(
+                printf '%s\n' "$OUT" | while IFS= read -r line; do
+                    if [[ "$line" == gatewayClassName:* ]]; then
+                        printf 'gatewayClassName: %s\n' "$GATEWAY_CLASS"
+                    else
+                        printf '%s\n' "$line"
+                    fi
+                done
+            )
+            echo "  gatewayClassName overridden → $GATEWAY_CLASS"
+        fi
+
         # Count the generated routes
         local C
         C=$(echo "$OUT" | grep -c "kind: HTTPRoute" || true)

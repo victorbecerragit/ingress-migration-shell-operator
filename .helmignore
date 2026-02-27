@@ -1,0 +1,21 @@
+# Patterns to ignore when building/packaging/linting this Helm chart.
+# This chart templates ConfigMaps from files under scripts/ via .Files.Get,
+# so do NOT ignore scripts/.
+
+# VCS
+.git/
+
+# Editor/IDE
+.vscode/
+
+# CI/GitHub metadata (not needed in chart packages)
+.github/
+
+# Local/demo/test artifacts
+demo/
+examples/
+tests/
+
+# Docs
+README.md
+test-review.md
