@@ -65,7 +65,7 @@ main() {
 
   echo "Trigger status (.data):"
   kubectl get configmap "$TRIGGER_CONFIGMAP" -n "$TRIGGER_NAMESPACE" -o json \
-    | jq -r '.data | {convertedResources, applied, error, lastRun}'
+    | jq -r '.data | {convertedResources, migratedEndpoints, applied, error, lastRun}'
 }
 
 main "$@"
