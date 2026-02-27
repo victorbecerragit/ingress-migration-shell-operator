@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# Shared status-patch library (mounted from ConfigMap at runtime via /hooks/).
+# shellcheck source=/dev/null
+source /hooks/status.sh
+
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
 configVersion: v1
@@ -40,6 +44,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
      echo "Validation checks passed."
      
      # Patch status
-     kubectl patch configmap "$CM_NAME" -n "$CM_NAMESPACE" --type merge -p "{\"data\": {\"validation\": \"success\", \"validatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+     patch_status "$CM_NAME" "$CM_NAMESPACE" \
+       "{\"data\": {\"validation\": \"success\", \"validatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
   fi
 done

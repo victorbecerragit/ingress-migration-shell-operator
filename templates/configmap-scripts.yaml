@@ -9,3 +9,7 @@ data:
 {{ .Files.Get "scripts/validate.sh" | indent 4 }}
   rollback.sh: |-
 {{ .Files.Get "scripts/rollback.sh" | indent 4 }}
+  # status.sh is sourced by all hooks at /hooks/status.sh.
+  # ConfigMap keys cannot contain '/', so the lib/ prefix is dropped here.
+  status.sh: |-
+{{ .Files.Get "scripts/lib/status.sh" | indent 4 }}

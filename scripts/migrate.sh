@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Shared status-patch library (mounted from ConfigMap at runtime via /hooks/).
+# shellcheck source=/dev/null
+source /hooks/status.sh
+
 # Flant shell-operator binding configuration
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
@@ -53,7 +57,8 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         if [ -z "$TARGET_NAMESPACES" ]; then
             echo "No namespaces matched the selector $NS_SELECTOR. Exiting..."
             # Update status
-            kubectl patch configmap "$CM_NAME" -n "$CM_NAMESPACE" --type merge -p "{\"data\": {\"error\": \"No matching namespaces\", \"lastRun\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+            patch_status "$CM_NAME" "$CM_NAMESPACE" \
+              "{\"data\": {\"error\": \"No matching namespaces\", \"lastRun\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
             continue
         fi
     fi
@@ -64,6 +69,23 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     ERROR_MSG="none"
 
     # Migration Execution Function
+    # ---------------------------------------------------------------------------
+    # dispatch_provider: validate provider alias, normalise to ingress2gateway
+    # --providers= flag value. Add new providers here as new case branches.
+    # ---------------------------------------------------------------------------
+    dispatch_provider() {
+      local alias="${1:?provider name required}"
+      case "$alias" in
+        ingress-nginx)         echo "ingress-nginx" ;;
+        apisix|apisix-ingress) echo "apisix-ingress" ;;
+        kgateway)              echo "kgateway" ;;
+        *)
+          echo "ERROR: Unknown provider '${alias}'." \
+               "Supported: ingress-nginx, apisix, apisix-ingress, kgateway" >&2
+          return 1 ;;
+      esac
+    }
+
     run_migration() {
         local ns=$1
         local ingress2gateway_bin="${INGRESS2GATEWAY_BIN:-ingress2gateway}"
@@ -75,7 +97,13 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         fi
         
         local -a args
-        args=(print "--providers=$PROVIDERS")
+        local provider_flag
+        if ! provider_flag=$(dispatch_provider "$PROVIDERS"); then
+          echo "Error: unsupported provider '$PROVIDERS'"
+          ERROR_MSG="unknown_provider"
+          return 1
+        fi
+        args=(print "--providers=${provider_flag}")
 
         if [ -n "$ns" ]; then
             echo "Converting in namespace: $ns"
@@ -299,7 +327,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
       --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date}}')
       
-    kubectl patch configmap "$CM_NAME" -n "$CM_NAMESPACE" --type merge -p "$STATUS_PAYLOAD"
+    patch_status "$CM_NAME" "$CM_NAMESPACE" "$STATUS_PAYLOAD"
     echo "Migration processing complete for $CM_NAME."
   fi
 done

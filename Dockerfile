@@ -1,19 +1,43 @@
+# syntax=docker/dockerfile:1
+# ---------------------------------------------------------------------------
+# Multi-arch build: supports linux/amd64 and linux/arm64.
+# Build with:
+#   docker buildx build --platform linux/amd64,linux/arm64 -t <image> .
+# ---------------------------------------------------------------------------
 FROM ghcr.io/flant/shell-operator:v1.4.16
 
-# Install required tools (bash, curl, jq, gettext, yq are often useful)
+ARG TARGETARCH=amd64
+ARG INGRESS2GATEWAY_VERSION=v0.5.0
+
 RUN apk add --no-cache bash curl jq gettext
 
-# Install kubectl
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-    && chmod +x kubectl \
-    && mv kubectl /usr/local/bin/
+# Install kubectl for the target architecture
+RUN KUBE_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt) && \
+    curl -fsSL \
+      "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+      -o /usr/local/bin/kubectl && \
+    chmod +x /usr/local/bin/kubectl
 
-# Install ingress2gateway v0.5.0
-RUN curl -LO "https://github.com/kubernetes-sigs/ingress2gateway/releases/download/v0.5.0/ingress2gateway_Linux_x86_64.tar.gz" \
-    && tar -xzf ingress2gateway_Linux_x86_64.tar.gz \
-    && chmod +x ingress2gateway \
-    && mv ingress2gateway /usr/local/bin/ \
-    && rm ingress2gateway_Linux_x86_64.tar.gz
+# Install ingress2gateway for the target architecture.
+# ingress2gateway release tarballs use x86_64 / arm64 naming (not amd64).
+RUN ARCH_NAME=$([ "$TARGETARCH" = "amd64" ] && echo "x86_64" || echo "arm64") && \
+    curl -fsSL \
+      "https://github.com/kubernetes-sigs/ingress2gateway/releases/download/${INGRESS2GATEWAY_VERSION}/ingress2gateway_Linux_${ARCH_NAME}.tar.gz" \
+      | tar -xz -C /usr/local/bin ingress2gateway && \
+    chmod +x /usr/local/bin/ingress2gateway
 
-# Note: Flant shell-operator executes executable scripts mounted into /hooks
-# Our Helm chart mounts a ConfigMap containing migrate.sh, rollback.sh, and validate.sh into /hooks
+# ---------------------------------------------------------------------------
+# Smoke-test: copy scripts into the image at build time so we can verify each
+# hook's --config path exits 0 before the image is pushed.
+# At runtime, the Helm chart overwrites /hooks/ via a ConfigMap volume mount.
+# ---------------------------------------------------------------------------
+COPY scripts/ /hooks/
+# Flatten lib/status.sh to /hooks/status.sh -- matches the ConfigMap key name
+# and the path that hooks source at runtime.
+RUN cp /hooks/lib/status.sh /hooks/status.sh && \
+    chmod +x /hooks/*.sh
+
+RUN echo '=== smoke-testing hook --config paths ==' && \
+    bash /hooks/migrate.sh  --config >/dev/null && echo 'migrate.sh  OK' && \
+    bash /hooks/validate.sh --config >/dev/null && echo 'validate.sh OK' && \
+    bash /hooks/rollback.sh --config >/dev/null && echo 'rollback.sh OK'
