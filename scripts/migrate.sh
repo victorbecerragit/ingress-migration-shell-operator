@@ -86,7 +86,15 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
 
         # Override gatewayClassName if the trigger specifies a target class
         if [ -n "${GATEWAY_CLASS:-}" ]; then
-            OUT=$(echo "$OUT" | sed "s/gatewayClassName: [^[:space:]]*/gatewayClassName: $GATEWAY_CLASS/g")
+            OUT=$(
+                printf '%s\n' "$OUT" | while IFS= read -r line; do
+                    if [[ "$line" == gatewayClassName:* ]]; then
+                        printf 'gatewayClassName: %s\n' "$GATEWAY_CLASS"
+                    else
+                        printf '%s\n' "$line"
+                    fi
+                done
+            )
             echo "  gatewayClassName overridden → $GATEWAY_CLASS"
         fi
 
