@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-prod
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    # Trigger parameters
+    shell-operator.flant.com/execute-hook-on: "create,update" # Implicit documentation flag
+    ingress-migration.flant.com/providers: "ingress-nginx,kong"
+    ingress-migration.flant.com/dry-run: "true"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+data:
+  # The shell operator will automatically patch the result of the migration here!
+  # Look for 'convertedResources', 'applied', and 'error' keys.
+  placeholder: "Waiting for operator trigger..."

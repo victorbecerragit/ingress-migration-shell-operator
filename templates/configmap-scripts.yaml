@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-ingress-migration-scripts
+data:
+  migrate.sh: |-
+{{ .Files.Get "scripts/migrate.sh" | indent 4 }}
+  validate.sh: |-
+{{ .Files.Get "scripts/validate.sh" | indent 4 }}
+  rollback.sh: |-
+{{ .Files.Get "scripts/rollback.sh" | indent 4 }}

@@ -1,0 +1,6 @@
+{
+    "yaml.schemas": {
+        "file:///home/victorbecerra/.vscode-server/extensions/atlassian.atlascode-3.8.8/resources/schemas/pipelines-schema.json": "bitbucket-pipelines.yml",
+        "kubernetes://schema/networking.k8s.io/v1@ingress": "file:///home/victorbecerra/kube-refresh/ingress-migration-shell-operator/tests/manifests/mock-cluster.yaml"
+    }
+}

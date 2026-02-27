@@ -1,0 +1,88 @@
+# demo/manifests/app.yaml
+# Namespace labeled env=prod + the echo application (Deployment + Service)
+# The namespace label is used by the migration operator's namespace-selector.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-prod
+  labels:
+    env: prod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: demo-prod
+  labels:
+    app: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-app
+  template:
+    metadata:
+      labels:
+        app: demo-app
+    spec:
+      containers:
+      - name: echo
+        # echo-basic echoes request path/headers/pod info — great for live demos
+        image: registry.k8s.io/gateway-api/echo-basic:v20251204-v1.4.1
+        ports:
+        - containerPort: 3000
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app
+  namespace: demo-prod
+  labels:
+    app: demo-app
+spec:
+  selector:
+    app: demo-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+  type: ClusterIP
+---
+# External legacy database — no spec.selector, so Endpoints are manually managed.
+# Represents the pattern that must be migrated to EndpointSlice (deprecated in k8s 1.33+).
+apiVersion: v1
+kind: Service
+metadata:
+  name: legacy-db
+  namespace: demo-prod
+spec:
+  ports:
+  - name: postgres
+    port: 5432
+    protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: legacy-db
+  namespace: demo-prod
+subsets:
+- addresses:
+  - ip: 192.168.100.10
+    hostname: db-primary
+  - ip: 192.168.100.11
+    hostname: db-replica
+  ports:
+  - name: postgres
+    port: 5432
+    protocol: TCP

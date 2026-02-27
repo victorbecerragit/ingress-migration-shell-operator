@@ -1,0 +1,17 @@
+# Trigger ConfigMap used by e2e tests.
+# This is NOT required to run the migration script directly, but the script expects
+# a real ConfigMap so it can patch status back into it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-mock
+  namespace: ingress-migration-mock
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "ingress-nginx"
+    ingress-migration.flant.com/dry-run: "true"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+data:
+  placeholder: "e2e"
