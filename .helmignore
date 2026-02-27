@@ -4,23 +4,17 @@
 
 # VCS
 .git/
-.git/**
 
 # Editor/IDE
 .vscode/
-.vscode/**
 
 # CI/GitHub metadata (not needed in chart packages)
 .github/
-.github/**
 
 # Local/demo/test artifacts
 demo/
-demo/**
 examples/
-examples/**
 tests/
-tests/**
 
 # Docs
 README.md

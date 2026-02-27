@@ -23,6 +23,9 @@ jobs:
       - name: Lint Helm Chart
         run: helm lint .
 
+      - name: Render Helm Templates
+        run: helm template ci . --namespace default > /dev/null
+
   build-push:
     needs: lint
     runs-on: ubuntu-latest
