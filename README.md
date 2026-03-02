@@ -20,6 +20,9 @@
 * `ingress2gateway` available in the operator image (tests auto-download it)
 * A Gateway API implementation/controller in your cluster (and any provider-specific CRDs if you enable a provider like `kong`)
 
+Notes:
+- `ingress-migration.flant.com/namespace-selector` is a **Namespace label selector** (e.g. `env=prod`). It scopes which namespaces are processed.
+
 ### Installation
 
 Install via Helm:
@@ -49,10 +52,37 @@ helm upgrade --install ingress-migrator ./ \
    *Look for the `convertedResources` and `applied` tracking annotations under data!*
 
 4. Apply for Real:
-   Change `dry-run: "false"` inside `examples/migration-prod.yaml` and re-apply:
+   Change `ingress-migration.flant.com/dry-run: "false"` inside `examples/migration-prod.yaml` and re-apply:
    ```bash
    kubectl apply -f examples/migration-prod.yaml
    ```
+
+## ↩️ Rollback (delete HTTPRoutes)
+
+Rollback is implemented as a separate hook that **deletes HTTPRoutes** (it does not delete Gateways). Create a rollback trigger ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+   name: rollback-demo
+   namespace: demo-prod
+   labels:
+      ingress-migration.flant.com/rollback: "true"
+   annotations:
+      # Optional: scope rollback to namespaces matching these labels.
+      # This selector matches Namespace labels (not HTTPRoute labels).
+      ingress-migration.flant.com/namespace-selector: "env=prod"
+data:
+   note: "Rollback trigger — delete HTTPRoutes"
+```
+
+Apply it and watch HTTPRoutes get removed:
+
+```bash
+kubectl apply -f /path/to/rollback-demo.yaml
+kubectl get httproute -A
+```
 
 ## 🕰️ History Buffer (Who / What / When)
 
@@ -119,6 +149,20 @@ E2E_KIND=1 \
 Notes:
 - Auto-install is only enabled by default when `E2E_KIND=1` (so it won't modify a shared cluster unexpectedly).
 - To force install on your current kubecontext cluster, set `E2E_INSTALL_APISIX=1`.
+
+### Run kgateway-dev controller E2E (Kind)
+
+This validates the “kgateway-dev controller” path. The test runner will install `kgateway-dev/kgateway` into the Kind cluster, run `ingress2gateway` with a supported provider (`ingress-nginx`), and override the output `gatewayClassName` via `ingress-migration.flant.com/gateway-class: "kgateway"`.
+
+```bash
+E2E_KIND=1 \
+   E2E_TRIGGER_MANIFEST=trigger-kgateway-dryrun.yaml \
+   bash ./tests/run-e2e.sh
+```
+
+Notes:
+- Auto-install is only enabled by default when `E2E_KIND=1` (so it won't modify a shared cluster unexpectedly).
+- To force install on your current kubecontext cluster, set `E2E_INSTALL_KGATEWAY=1`.
 
 ### 🧠 How does it work?
 The tool intercepts `ConfigMap` Create/Update events annotated with `ingress-migration.flant.com/*` using Flant Shell operator events and safely processes them using inline Bash executing `ingress2gateway`. No massive Go builds, purely composable binaries!

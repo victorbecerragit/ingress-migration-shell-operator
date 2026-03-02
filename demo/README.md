@@ -27,7 +27,7 @@ Based on the Kubernetes blog post:
 | `docker` | https://docs.docker.com/get-docker/ |
 | `kind` | https://kind.sigs.k8s.io/docs/user/quick-start/#installation |
 | `kubectl` | https://kubernetes.io/docs/tasks/tools/ |
-| `helm` | https://helm.sh/docs/intro/install/ (required only for APISIX install) |
+| `helm` | https://helm.sh/docs/intro/install/ (required only for optional APISIX / kgateway-dev installs) |
 | `curl`, `jq` | system package manager |
 
 ---
@@ -174,6 +174,7 @@ metadata:
   annotations:
     ingress-migration.flant.com/providers: "apisix"
     ingress-migration.flant.com/dry-run: "true"
+    # Scopes work to namespaces matching this Namespace label selector.
     ingress-migration.flant.com/namespace-selector: "env=prod"
     ingress-migration.flant.com/migrate-endpoints: "true"
 data:
@@ -230,6 +231,129 @@ kubectl get httproute -n demo-prod
 ```
 
 At this point you can test the Gateway address the same way the default demo does (see `demo/03-apply.sh`).
+
+---
+
+## Step-by-step — Test kgateway-dev (as the target Gateway API controller)
+
+`kgateway-dev` is a **Gateway API implementation** (a controller) and is not an `ingress2gateway` “provider”.
+For this demo, you still run `ingress2gateway` with a supported provider (typically `ingress-nginx`), and then set `ingress-migration.flant.com/gateway-class` to the GatewayClass you want in the output.
+
+### 0) Create the demo Kind cluster
+
+```bash
+bash demo/setup.sh
+```
+
+### 1) Install kgateway-dev into the cluster
+
+This repo includes a helper installer used by the E2E tests:
+
+```bash
+bash demo/install-kgateway.sh
+kubectl get pods -n kgateway-system
+kubectl get gatewayclass
+```
+
+Pick the GatewayClass name that kgateway-dev installed (commonly `kgateway`) and export it:
+
+```bash
+KGW_CLASS="kgateway"  # adjust if your cluster shows a different name
+```
+
+### 2) Deploy the demo app + the NGINX Ingress
+
+```bash
+kubectl apply -f demo/manifests/app.yaml
+kubectl rollout status deployment/demo-app -n demo-prod --timeout=90s
+
+kubectl apply -f demo/manifests/ingress.yaml
+kubectl get ingress -n demo-prod
+```
+
+### 3) Run the migration in dry-run mode (provider = ingress-nginx, target = kgateway-dev)
+
+```bash
+cat > /tmp/trigger-kgateway-dev-dryrun.yaml <<YAML
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-demo
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "ingress-nginx"
+    ingress-migration.flant.com/dry-run: "true"
+    # Scopes work to namespaces matching this Namespace label selector.
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+    ingress-migration.flant.com/gateway-class: "${KGW_CLASS}"
+data:
+  note: "Trigger ConfigMap — dry-run (provider=ingress-nginx, target=kgateway-dev)"
+YAML
+
+kubectl apply -f /tmp/trigger-kgateway-dev-dryrun.yaml
+
+MANIFESTS_MOCK_CLUSTER="demo/manifests/app.yaml demo/manifests/ingress.yaml" \
+  MANIFESTS_TRIGGER="/tmp/trigger-kgateway-dev-dryrun.yaml" \
+  TRIGGER_NAMESPACE="demo-prod" \
+  TRIGGER_CONFIGMAP="migrate-ingress-demo" \
+  E2E_BIN_DIR="demo/.bin" \
+  bash tests/run-manual.sh
+
+kubectl get configmap migrate-ingress-demo -n demo-prod -o json | jq '.data'
+```
+
+### 4) Apply the generated Gateway API resources
+
+```bash
+cat > /tmp/trigger-kgateway-dev-apply.yaml <<YAML
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-demo
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "ingress-nginx"
+    ingress-migration.flant.com/dry-run: "false"
+    # Scopes work to namespaces matching this Namespace label selector.
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+    ingress-migration.flant.com/gateway-class: "${KGW_CLASS}"
+data:
+  note: "Trigger ConfigMap — apply (provider=ingress-nginx, target=kgateway-dev)"
+YAML
+
+kubectl apply -f /tmp/trigger-kgateway-dev-apply.yaml
+
+MANIFESTS_MOCK_CLUSTER="demo/manifests/app.yaml demo/manifests/ingress.yaml" \
+  MANIFESTS_TRIGGER="/tmp/trigger-kgateway-dev-apply.yaml" \
+  TRIGGER_NAMESPACE="demo-prod" \
+  TRIGGER_CONFIGMAP="migrate-ingress-demo" \
+  E2E_BIN_DIR="demo/.bin" \
+  bash tests/run-manual.sh
+
+kubectl get gateway -n demo-prod
+kubectl get httproute -n demo-prod
+```
+
+### 5) Verify traffic is served via Gateway API
+
+If the Gateway reports an address, curl it the same way the rest of this demo does:
+
+```bash
+GW_IP=$(kubectl get gateway -n demo-prod nginx -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+echo "GW_IP=$GW_IP"
+
+if [ -n "$GW_IP" ]; then
+  curl --resolve "demo.prod.example:80:${GW_IP}" http://demo.prod.example/ | jq '{path, host, namespace, pod}'
+else
+  echo "Gateway has no address yet. Check: kubectl get gateway -n demo-prod -o yaml"
+fi
+```
 
 ### Live demo steps
 
@@ -339,6 +463,8 @@ metadata:
     ingress-migration.flant.com/dry-run: "false"
     ingress-migration.flant.com/gateway-class: "cloud-provider-kind"
 ```
+
+If you're targeting `kgateway-dev`, set `ingress-migration.flant.com/gateway-class` to the GatewayClass installed by kgateway-dev (commonly `kgateway`).
 
 In a real cluster you would match the `gatewayClassName` to whichever
 [Gateway API implementation](https://gateway-api.sigs.k8s.io/implementations/)

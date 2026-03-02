@@ -24,6 +24,23 @@ setup() {
   [ "$output" = "apisix" ]
 }
 
+@test "dispatch_provider: kong" {
+  run dispatch_provider "kong"
+  [ "$status" -eq 0 ]
+  [ "$output" = "kong" ]
+}
+
+@test "dispatch_provider: kong-ingress alias maps to kong" {
+  run dispatch_provider "kong-ingress"
+  [ "$status" -eq 0 ]
+  [ "$output" = "kong" ]
+}
+
+@test "dispatch_provider: kgateway-dev is not a provider" {
+  run dispatch_provider "kgateway-dev"
+  [ "$status" -ne 0 ]
+}
+
 @test "dispatch_provider: unknown provider fails" {
   run dispatch_provider "totally-unknown"
   [ "$status" -ne 0 ]

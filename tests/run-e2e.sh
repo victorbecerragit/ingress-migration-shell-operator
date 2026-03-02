@@ -13,6 +13,7 @@ CM_NAMESPACE=${E2E_CM_NAMESPACE:-ingress-migration-mock}
 CM_NAME=${E2E_CM_NAME:-migrate-ingress-mock}
 TRIGGER_MANIFEST=${E2E_TRIGGER_MANIFEST:-trigger-dryrun.yaml}
 E2E_INSTALL_APISIX=${E2E_INSTALL_APISIX:-auto}
+E2E_INSTALL_KGATEWAY=${E2E_INSTALL_KGATEWAY:-auto}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -117,6 +118,29 @@ if [[ "$TRIGGER_MANIFEST" == *"apisix"* ]]; then
       ;;
     *)
       die "Invalid E2E_INSTALL_APISIX value: '$E2E_INSTALL_APISIX' (use auto|1|0)"
+      ;;
+  esac
+fi
+
+if [[ "$TRIGGER_MANIFEST" == *"kgateway"* ]]; then
+  case "$E2E_INSTALL_KGATEWAY" in
+    1|true|yes)
+      echo "Installing kgateway-dev (forced via E2E_INSTALL_KGATEWAY=$E2E_INSTALL_KGATEWAY)"
+      bash "$ROOT_DIR/tests/lib/install-kgateway.sh"
+      ;;
+    auto)
+      if [[ "$USE_KIND" == "1" ]]; then
+        echo "Installing kgateway-dev (auto; Kind E2E + kgateway trigger)"
+        bash "$ROOT_DIR/tests/lib/install-kgateway.sh"
+      else
+        echo "Skipping kgateway-dev install (E2E_KIND!=1). Set E2E_INSTALL_KGATEWAY=1 to install on the current cluster."
+      fi
+      ;;
+    0|false|no)
+      echo "Skipping kgateway-dev install (E2E_INSTALL_KGATEWAY=$E2E_INSTALL_KGATEWAY)"
+      ;;
+    *)
+      die "Invalid E2E_INSTALL_KGATEWAY value: '$E2E_INSTALL_KGATEWAY' (use auto|1|0)"
       ;;
   esac
 fi

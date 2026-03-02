@@ -1,0 +1,16 @@
+# Example trigger ConfigMap for the APISIX ingress2gateway provider.
+# Note: ingress-migration.flant.com/namespace-selector matches Namespace labels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-apisix
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "apisix"
+    ingress-migration.flant.com/dry-run: "true"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+data:
+  note: "Example trigger — dry-run for APISIX provider"

@@ -67,11 +67,18 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
      
     echo "Rolling back HTTPRoutes triggered by $CM_NAME/$CM_NAMESPACE..."
      
-     if [ -n "$NS_SELECTOR" ]; then
-         ROUTES=$(kubectl get httproute -l "$NS_SELECTOR" -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' || true)
-     else
-         ROUTES=$(kubectl get httproute -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' || true)
-     fi
+    if [ -n "$NS_SELECTOR" ]; then
+        	NAMESPACES=$(kubectl get namespace -l "$NS_SELECTOR" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' || true)
+        	ROUTES=""
+        	for ns in $NAMESPACES; do
+            	if [ -z "$ns" ]; then
+              	continue
+            	fi
+            	ROUTES+=$(kubectl get httproute -n "$ns" -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+        	done
+    else
+        	ROUTES=$(kubectl get httproute -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' || true)
+    fi
      
      DELETED_COUNT=0
      for route in $ROUTES; do

@@ -11,7 +11,7 @@
 `ingress-migration-shell-operator` is a Flant shell-operator–based Kubernetes controller that watches trigger ConfigMaps and runs `ingress2gateway` to convert Ingress resources to Gateway API (HTTPRoute/Gateway) objects.
 
 The goal of this feature branch is to:
-1. Make provider selection explicit and extensible (APISIX, Kgateway, future providers)
+1. Make provider selection explicit and extensible (APISIX, Kong, future providers)
 2. Extract duplicated status-patching into a shared library with retry logic
 3. Harden the Dockerfile for multi-arch builds (arm64/amd64) and add smoke-tests
 4. Lay the groundwork for a real validation hook
@@ -21,14 +21,12 @@ The goal of this feature branch is to:
 ## Architecture: Provider Dispatch
 
 ### Current State
-`migrate.sh` accepts any string via the `providers` annotation and passes it verbatim to ingress2gateway:
-```bash
-args=(print "--providers=$PROVIDERS")
-```
-This silently fails on typos or unsupported providers and makes future per-provider logic impossible.
+The migration hook reads `ingress-migration.flant.com/providers` from the trigger ConfigMap.
+If you pass an unsupported provider name (or a common alias), the hook needs to normalise it (or fail fast) before calling `ingress2gateway`.
 
 ### Target State
-A `dispatch_provider` function validates the annotation value, normalises provider aliases, and returns the canonical `--providers=` flag value. This opens the door to routing different providers through different tool paths in the future.
+A `dispatch_provider` function validates the annotation value, normalises provider aliases, and returns the canonical `--providers=` flag value.
+In the current codebase, this function lives in `scripts/lib/provider.sh` and is sourced by `scripts/migrate.sh`.
 
 ```
 trigger ConfigMap
@@ -40,7 +38,8 @@ trigger ConfigMap
         ├── ingress-nginx   →  --providers=ingress-nginx  (ingress2gateway)
       ├── apisix          →  --providers=apisix         (ingress2gateway)
       ├── apisix-ingress  →  --providers=apisix         (ingress2gateway)
-        └── kgateway        →  --providers=kgateway       (ingress2gateway)
+        ├── kong           →  --providers=kong          (ingress2gateway)
+        └── kong-ingress    →  --providers=kong          (ingress2gateway)
 ```
 
 **Supported providers (v1):**
@@ -50,11 +49,16 @@ trigger ConfigMap
 | `ingress-nginx`      | `--providers=ingress-nginx`  | Default; NGINX community ingress  |
 | `apisix`             | `--providers=apisix` | Apache APISIX provider              |
 | `apisix-ingress`     | `--providers=apisix` | Alias for apisix                    |
-| `kgateway`           | `--providers=kgateway`       | Kong's OSS Gateway (Kgateway)     |
+| `kong`               | `--providers=kong`  | Kong Ingress Controller              |
+| `kong-ingress`        | `--providers=kong`  | Alias for kong                      |
 
-**Adding a new provider:** Add a case to `dispatch_provider()` in `scripts/migrate.sh`. If the provider requires a different binary, replace the `ingress2gateway` invocation inside the appropriate case branch.
+**Adding a new provider:** Add a case to `dispatch_provider()` in `scripts/lib/provider.sh`. If the provider requires different flags/behavior, adjust the `ingress2gateway` invocation in `scripts/migrate.sh`.
+
+**Namespace scoping:** `ingress-migration.flant.com/namespace-selector` is a **Namespace label selector** (e.g. `team=platform`). The hook selects namespaces first, then processes objects inside them.
 
 ### Trigger ConfigMap example — APISIX
+See [examples/trigger-apisix.yaml](../examples/trigger-apisix.yaml) for a runnable example.
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -68,16 +72,18 @@ metadata:
     ingress-migration.flant.com/dry-run: "false"
 ```
 
-### Trigger ConfigMap example — Kgateway
+### Trigger ConfigMap example — Kong
+Copy the APISIX example and set `ingress-migration.flant.com/providers: "kong"`.
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: trigger-kgateway-migration
+  name: trigger-kong-migration
   labels:
     ingress-migration.flant.com/trigger: "true"
   annotations:
-    ingress-migration.flant.com/providers: "kgateway"
+    ingress-migration.flant.com/providers: "kong"
     ingress-migration.flant.com/dry-run: "true"
 ```
 
@@ -153,7 +159,7 @@ Broken/syntactically-invalid scripts now fail the build rather than shipping sil
 | `Dockerfile` | Multi-arch TARGETARCH; smoke-test in RUN | 🔴 High |
 | `templates/configmap-scripts.yaml` | Add `status.sh` key from `scripts/lib/status.sh` | 🔴 High |
 | `examples/trigger-apisix.yaml` | New example trigger for APISIX | 🟡 Medium |
-| `examples/trigger-kgateway.yaml` | New example trigger for Kgateway | 🟡 Medium |
+| `examples/trigger-kgateway.yaml` | New example trigger for kgateway-dev controller | 🟡 Medium |
 | `scripts/validate.sh` | Real HTTPRoute `.status.conditions` check | 🟡 Medium |
 | `.github/workflows/ci.yml` | Multi-arch build + Trivy scan | 🟡 Medium |
 | `values.yaml` | Add `providers:` section | 🟢 Low |
@@ -179,7 +185,7 @@ Broken/syntactically-invalid scripts now fail the build rather than shipping sil
 |---|------|
 | M1 | Real validate.sh: check HTTPRoute `.status.conditions[type=Accepted]` |
 | M2 | GitHub Actions workflow: matrix build + Trivy vulnerability scan |
-| M3 | Example trigger ConfigMaps for APISIX and Kgateway |
+| M3 | Example trigger ConfigMaps for APISIX and kgateway-dev |
 | M4 | Helm `values.yaml` `providers:` section with documentation |
 
 ### 🟢 Low (backlog)
@@ -194,6 +200,6 @@ Broken/syntactically-invalid scripts now fail the build rather than shipping sil
 
 ## Open Questions
 
-1. **ingress2gateway version**: v0.5.0 supports `apisix` and `kgateway` — confirm with the ingress2gateway release notes before enabling these in production.
+1. **ingress2gateway version**: v0.5.0 supports `apisix` and `kong` — confirm with the ingress2gateway release notes before enabling these in production.
 2. **Gateway CR ownership**: When a trigger applies the migration, should the operator also create the Gateway CR, or assume it pre-exists? Currently it assumes pre-existence.
 3. **Status history**: The current patch overwrites `data.lastRun`. Should we keep a ring-buffer of recent runs (e.g., `lastRuns` as a JSON array)?

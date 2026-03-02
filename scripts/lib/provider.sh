@@ -9,10 +9,10 @@ dispatch_provider() {
   case "$alias" in
     ingress-nginx)         echo "ingress-nginx" ;;
     apisix|apisix-ingress) echo "apisix" ;;
-    kgateway)              echo "kgateway" ;;
+    kong|kong-ingress)     echo "kong" ;;
     *)
       echo "ERROR: Unknown provider '${alias}'." \
-           "Supported: ingress-nginx, apisix, apisix-ingress, kgateway" >&2
+           "Supported: ingress-nginx, apisix, apisix-ingress, kong, kong-ingress" >&2
       return 1 ;;
   esac
 }
