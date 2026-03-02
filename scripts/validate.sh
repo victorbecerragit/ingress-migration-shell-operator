@@ -4,9 +4,20 @@
 
 set -euo pipefail
 
-# Shared status-patch library (mounted from ConfigMap at runtime via /hooks/).
+# Shared libraries.
 # shellcheck source=/dev/null
-source /hooks/status.sh
+if [[ -f /hooks/status.sh ]]; then
+  source /hooks/status.sh
+else
+  source "$(dirname "$0")/lib/status.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/history.sh ]]; then
+  source /hooks/history.sh
+else
+  source "$(dirname "$0")/lib/history.sh"
+fi
 
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
@@ -38,6 +49,21 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
        echo "Skipping event without ConfigMap object (type=$EVENT_TYPE)"
        continue
      fi
+
+     HISTORY_ENABLED=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-enabled"] // "true"')
+     HISTORY_CM=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-configmap"] // "ingress-migration-history"')
+     HISTORY_MAX=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-max-entries"] // "100"')
+     INITIATOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/initiator"] // ""')
+     CLUSTER_ID=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/cluster-id"] // ""')
+     if [[ -z "$CLUSTER_ID" ]]; then
+       CLUSTER_ID="${KUBERNETES_SERVICE_HOST:-}"
+     fi
+     if [[ -z "$CLUSTER_ID" ]]; then
+       CLUSTER_ID=$(kubectl config current-context 2>/dev/null || true)
+     fi
+     if [[ -z "$CLUSTER_ID" ]]; then
+       CLUSTER_ID="unknown"
+     fi
      
      # Future Validation logic placeholder: Check if HTTPRoutes exist and mirror endpoints
      # Right now we just mark success if run.
@@ -46,5 +72,22 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
      # Patch status
      patch_status "$CM_NAME" "$CM_NAMESPACE" \
        "{\"data\": {\"validation\": \"success\", \"validatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+
+     if [[ "$HISTORY_ENABLED" == "true" ]]; then
+       cluster_key=$(history_sanitize_key "$CLUSTER_ID")
+       data_key="history.${cluster_key}.jsonl"
+       entry=$(jq -n -c \
+         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+         --arg action "validate" \
+         --arg clusterId "$CLUSTER_ID" \
+         --arg initiator "$INITIATOR" \
+         --arg triggerNs "$CM_NAMESPACE" \
+         --arg triggerName "$CM_NAME" \
+         '{ts:$ts, action:$action, clusterId:$clusterId, initiator:$initiator,
+           trigger:{namespace:$triggerNs, name:$triggerName},
+           result:{validation:"success"}
+         }')
+       history_append_jsonl "$CM_NAMESPACE" "$HISTORY_CM" "$data_key" "$entry" "$HISTORY_MAX" || true
+     fi
   fi
 done

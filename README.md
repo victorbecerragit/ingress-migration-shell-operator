@@ -2,7 +2,7 @@
 
 **NGINX Ingress dies March 2026. Migrate to Gateway API in 5 minutes, zero Go required.**
 
-`ingress-migration-shell-operator` is a Kubernetes-native, GitOps-ready, zero-code tool to automatically convert NGINX Ingress resources to Kubernetes Gateway API (specifically Kong provider). It harnesses the power of [Flant Shell Operator](https://github.com/flant/shell-operator) and `ingress2gateway` to execute dynamic migrations via declarative triggers.
+`ingress-migration-shell-operator` is a Kubernetes-native, GitOps-ready, zero-code tool to automatically convert Ingress resources to Kubernetes Gateway API (via `ingress2gateway`). It harnesses the power of [Flant Shell Operator](https://github.com/flant/shell-operator) and `ingress2gateway` to execute dynamic migrations via declarative triggers.
 
 ## ✨ Features
 * **Zero Downtime**: Generates and applies `HTTPRoute` resources side-by-side with your existing Ingresses.
@@ -17,7 +17,8 @@
 ### Prerequisites
 * Kubernetes Cluster (tested on `minikube`)
 * Helm v3
-* Kong Ingress Controller with Gateway API support
+* `ingress2gateway` available in the operator image (tests auto-download it)
+* A Gateway API implementation/controller in your cluster (and any provider-specific CRDs if you enable a provider like `kong`)
 
 ### Installation
 
@@ -52,6 +53,27 @@ helm upgrade --install ingress-migrator ./ \
    ```bash
    kubectl apply -f examples/migration-prod.yaml
    ```
+
+## 🕰️ History Buffer (Who / What / When)
+
+Each hook run can append a compact JSON entry into a rolling JSONL buffer stored in a ConfigMap (in the same namespace as the trigger). This is best-effort and bounded (default: last 100 entries) so it should not add noisy retries.
+
+### Trigger annotations
+- `ingress-migration.flant.com/history-enabled`: `"true"|"false"` (default `"true"`)
+- `ingress-migration.flant.com/history-configmap`: name to store history (default `ingress-migration-history`)
+- `ingress-migration.flant.com/history-max-entries`: integer as string (default `"100"`)
+- `ingress-migration.flant.com/cluster-id`: stable cluster identifier (recommended; used to partition history per cluster)
+- `ingress-migration.flant.com/initiator`: who triggered this (e.g. email, team, CI job)
+
+### Read history
+If you set `cluster-id: "prod-us-east-1"`, entries are stored under the data key `history.prod-us-east-1.jsonl`:
+
+```bash
+kubectl get configmap ingress-migration-history -n demo-prod -o json \
+   | jq -r '.data["history.prod-us-east-1.jsonl"]'
+```
+
+Each line is a JSON object (JSONL).
 
 ## ✅ E2E Tests (Mock Cluster)
 

@@ -8,9 +8,12 @@ metadata:
   annotations:
     # Trigger parameters
     shell-operator.flant.com/execute-hook-on: "create,update" # Implicit documentation flag
-    ingress-migration.flant.com/providers: "ingress-nginx,kong"
+    ingress-migration.flant.com/providers: "ingress-nginx"
     ingress-migration.flant.com/dry-run: "true"
     ingress-migration.flant.com/namespace-selector: "env=prod"
+    # Optional: history tracking (best-effort)
+    ingress-migration.flant.com/cluster-id: "minikube"
+    ingress-migration.flant.com/initiator: "your.name@example.com"
 data:
   # The shell operator will automatically patch the result of the migration here!
   # Look for 'convertedResources', 'applied', and 'error' keys.

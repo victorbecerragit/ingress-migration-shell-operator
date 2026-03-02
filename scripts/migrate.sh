@@ -2,9 +2,22 @@
 
 set -euo pipefail
 
-# Shared status-patch library (mounted from ConfigMap at runtime via /hooks/).
+# Shared libraries.
+# - In-cluster: mounted from ConfigMap at runtime via /hooks/
+# - Local/tests: fall back to scripts/lib/
 # shellcheck source=/dev/null
-source /hooks/status.sh
+if [[ -f /hooks/status.sh ]]; then
+    source /hooks/status.sh
+else
+    source "$(dirname "$0")/lib/status.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/history.sh ]]; then
+    source /hooks/history.sh
+else
+    source "$(dirname "$0")/lib/history.sh"
+fi
 
 # Flant shell-operator binding configuration
 if [[ ${1:-} == "--config" ]] ; then
@@ -48,6 +61,25 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     MIGRATE_ENDPOINTS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/migrate-endpoints"] // "false"')
     GATEWAY_CLASS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/gateway-class"] // ""')
 
+        # History configuration (enabled by default)
+        HISTORY_ENABLED=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-enabled"] // "true"')
+        HISTORY_CM=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-configmap"] // "ingress-migration-history"')
+        HISTORY_MAX=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-max-entries"] // "100"')
+        INITIATOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/initiator"] // ""')
+        CLUSTER_ID=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/cluster-id"] // ""')
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID="${CLUSTER_ID:-${CLUSTER_ID_ENV:-}}"
+        fi
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID="${CLUSTER_ID:-${KUBERNETES_SERVICE_HOST:-}}"
+        fi
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID=$(kubectl config current-context 2>/dev/null || true)
+        fi
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID="unknown"
+        fi
+
     echo "Migration Triggered: $CM_NAMESPACE/$CM_NAME (DryRun: $DRY_RUN, Providers: $PROVIDERS, Selector: $NS_SELECTOR, MigrateEndpoints: $MIGRATE_ENDPOINTS, GatewayClass: ${GATEWAY_CLASS:-<default>})"
 
     # Gather namespaces based on selector
@@ -64,9 +96,14 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     fi
 
     COUNT=0
+    GW_COUNT=0
     ENDPOINT_COUNT=0
     APPLIED="false"
     ERROR_MSG="none"
+    BEFORE_INGRESS_COUNT=0
+    BEFORE_INGRESS_SAMPLE=""
+    NS_LIST=""
+    MANIFEST_HASH_INPUT=""
 
     # Migration Execution Function
     # ---------------------------------------------------------------------------
@@ -119,6 +156,13 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
             return 1
         }
 
+                # Hash the generated manifests for history tracking
+                local out_hash
+                out_hash=$(printf '%s' "$OUT" | history_sha256_stdin)
+                if [[ -n "$out_hash" ]]; then
+                    MANIFEST_HASH_INPUT+="$out_hash\n"
+                fi
+
         # Override gatewayClassName if the trigger specifies a target class
         if [ -n "${GATEWAY_CLASS:-}" ]; then
             OUT=$(
@@ -137,6 +181,10 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         local C
         C=$(echo "$OUT" | grep -c "kind: HTTPRoute" || true)
         COUNT=$((COUNT + C))
+
+        local G
+        G=$(echo "$OUT" | grep -c "kind: Gateway" || true)
+        GW_COUNT=$((GW_COUNT + G))
         
         if [ "$C" -gt 0 ]; then
             if [ "$DRY_RUN" == "false" ]; then
@@ -301,12 +349,24 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
 
     if [ -n "$TARGET_NAMESPACES" ]; then
         for namespace in $TARGET_NAMESPACES; do
+            NS_LIST+="$namespace "
+            # Snapshot existing ingresses (best-effort, bounded sample)
+            local_ing_count=$(kubectl get ingress -n "$namespace" -o name 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            BEFORE_INGRESS_COUNT=$((BEFORE_INGRESS_COUNT + local_ing_count))
+            if [[ $(printf '%s' "$BEFORE_INGRESS_SAMPLE" | wc -l) -lt 20 ]]; then
+              BEFORE_INGRESS_SAMPLE+=$(kubectl get ingress -n "$namespace" -o name 2>/dev/null | head -n 5 | sed "s|^|$namespace/|" || true)
+              BEFORE_INGRESS_SAMPLE+="\n"
+            fi
             run_migration "$namespace" || break
             if [ "$MIGRATE_ENDPOINTS" = "true" ]; then
                 migrate_endpoints "$namespace"
             fi
         done
     else
+        NS_LIST+="<cluster-wide> "
+        local_ing_count=$(kubectl get ingress -A -o name 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        BEFORE_INGRESS_COUNT=$((BEFORE_INGRESS_COUNT + local_ing_count))
+        BEFORE_INGRESS_SAMPLE=$(kubectl get ingress -A -o name 2>/dev/null | head -n 10 || true)
         run_migration ""
         if [ "$MIGRATE_ENDPOINTS" = "true" ]; then
             migrate_endpoints ""
@@ -328,6 +388,52 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
       '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date}}')
       
     patch_status "$CM_NAME" "$CM_NAMESPACE" "$STATUS_PAYLOAD"
+
+        # Append history entry (best-effort)
+        if [[ "$HISTORY_ENABLED" == "true" ]]; then
+            cluster_key=$(history_sanitize_key "$CLUSTER_ID")
+            data_key="history.${cluster_key}.jsonl"
+
+            manifest_hash=""
+            if [[ -n "$MANIFEST_HASH_INPUT" ]]; then
+                manifest_hash=$(printf '%b' "$MANIFEST_HASH_INPUT" | history_sha256_stdin)
+            fi
+
+            # Normalize the ingress sample as a JSON array (bounded)
+            ingress_sample_json=$(printf '%b' "$BEFORE_INGRESS_SAMPLE" | sed '/^\s*$/d' | head -n 20 | jq -R -s -c 'split("\n") | map(select(length>0))')
+            ns_list_json=$(printf '%s' "$NS_LIST" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
+
+            entry=$(jq -n -c \
+                --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --arg action "migrate" \
+                --arg clusterId "$CLUSTER_ID" \
+                --arg initiator "$INITIATOR" \
+                --arg triggerNs "$CM_NAMESPACE" \
+                --arg triggerName "$CM_NAME" \
+                --arg providers "$PROVIDERS" \
+                --arg dryRun "$DRY_RUN" \
+                --arg nsSelector "$NS_SELECTOR" \
+                --arg migrateEndpoints "$MIGRATE_ENDPOINTS" \
+                --arg gatewayClass "$GATEWAY_CLASS" \
+                --arg convertedResources "$COUNT" \
+                --arg convertedGateways "$GW_COUNT" \
+                --arg migratedEndpoints "$ENDPOINT_COUNT" \
+                --arg applied "$APPLIED" \
+                --arg error "$ERROR_MSG" \
+                --arg manifestHash "$manifest_hash" \
+                --arg beforeIngressCount "$BEFORE_INGRESS_COUNT" \
+                --argjson beforeIngressSample "$ingress_sample_json" \
+                --argjson namespaces "$ns_list_json" \
+                '{ts:$ts, action:$action, clusterId:$clusterId, initiator:$initiator,
+                    trigger:{namespace:$triggerNs, name:$triggerName},
+                    config:{providers:$providers, dryRun:$dryRun, namespaceSelector:$nsSelector, migrateEndpoints:$migrateEndpoints, gatewayClass:$gatewayClass},
+                    before:{ingressCount:$beforeIngressCount, ingressSample:$beforeIngressSample},
+                    after:{httpRoutes:$convertedResources, gateways:$convertedGateways, endpointSlicesConverted:$migratedEndpoints, applied:$applied, error:$error, manifestHash:$manifestHash},
+                    namespaces:$namespaces
+                }')
+
+            history_append_jsonl "$CM_NAMESPACE" "$HISTORY_CM" "$data_key" "$entry" "$HISTORY_MAX" || true
+        fi
     echo "Migration processing complete for $CM_NAME."
   fi
 done

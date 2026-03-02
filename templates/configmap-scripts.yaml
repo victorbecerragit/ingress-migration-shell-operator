@@ -13,3 +13,6 @@ data:
   # ConfigMap keys cannot contain '/', so the lib/ prefix is dropped here.
   status.sh: |-
 {{ .Files.Get "scripts/lib/status.sh" | indent 4 }}
+  # history.sh is sourced by hooks at /hooks/history.sh.
+  history.sh: |-
+{{ .Files.Get "scripts/lib/history.sh" | indent 4 }}
