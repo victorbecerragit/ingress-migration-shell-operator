@@ -11,6 +11,8 @@ VERBOSE=${E2E_VERBOSE:-0}
 
 CM_NAMESPACE=${E2E_CM_NAMESPACE:-ingress-migration-mock}
 CM_NAME=${E2E_CM_NAME:-migrate-ingress-mock}
+TRIGGER_MANIFEST=${E2E_TRIGGER_MANIFEST:-trigger-dryrun.yaml}
+E2E_INSTALL_APISIX=${E2E_INSTALL_APISIX:-auto}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -96,6 +98,29 @@ if [[ "$USE_KIND" == "1" ]]; then
   fi
 fi
 
+if [[ "$TRIGGER_MANIFEST" == *"apisix"* ]]; then
+  case "$E2E_INSTALL_APISIX" in
+    1|true|yes)
+      echo "Installing APISIX (forced via E2E_INSTALL_APISIX=$E2E_INSTALL_APISIX)"
+      bash "$ROOT_DIR/tests/lib/install-apisix.sh"
+      ;;
+    auto)
+      if [[ "$USE_KIND" == "1" ]]; then
+        echo "Installing APISIX (auto; Kind E2E + APISIX trigger)"
+        bash "$ROOT_DIR/tests/lib/install-apisix.sh"
+      else
+        echo "Skipping APISIX install (E2E_KIND!=1). Set E2E_INSTALL_APISIX=1 to install on the current cluster."
+      fi
+      ;;
+    0|false|no)
+      echo "Skipping APISIX install (E2E_INSTALL_APISIX=$E2E_INSTALL_APISIX)"
+      ;;
+    *)
+      die "Invalid E2E_INSTALL_APISIX value: '$E2E_INSTALL_APISIX' (use auto|1|0)"
+      ;;
+  esac
+fi
+
 cleanup() {
   rm -f "${OBJ_FILE:-}" "${CTX_FILE:-}" "${HOOK_LOG:-}" 2>/dev/null || true
   if [[ "$KIND_CREATED" == "1" ]]; then
@@ -107,7 +132,7 @@ trap cleanup EXIT
 
 echo "Applying mock cluster resources..."
 kubectl apply -f "$MANIFEST_DIR/mock-cluster.yaml" >/dev/null
-kubectl apply -f "$MANIFEST_DIR/trigger-dryrun.yaml" >/dev/null
+kubectl apply -f "$MANIFEST_DIR/$TRIGGER_MANIFEST" >/dev/null
 
 OBJ_FILE=$(mktemp)
 CTX_FILE=$(mktemp)
@@ -155,3 +180,5 @@ if [[ "$convertedResources" -lt 1 ]]; then
 fi
 
 echo "PASS: convertedResources=$convertedResources applied=$applied error=$error"
+
+echo "Used trigger manifest: $TRIGGER_MANIFEST"

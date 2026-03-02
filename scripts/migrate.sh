@@ -19,6 +19,13 @@ else
     source "$(dirname "$0")/lib/history.sh"
 fi
 
+# shellcheck source=/dev/null
+if [[ -f /hooks/provider.sh ]]; then
+    source /hooks/provider.sh
+else
+    source "$(dirname "$0")/lib/provider.sh"
+fi
+
 # Flant shell-operator binding configuration
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
@@ -105,24 +112,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     NS_LIST=""
     MANIFEST_HASH_INPUT=""
 
-    # Migration Execution Function
-    # ---------------------------------------------------------------------------
-    # dispatch_provider: validate provider alias, normalise to ingress2gateway
-    # --providers= flag value. Add new providers here as new case branches.
-    # ---------------------------------------------------------------------------
-    dispatch_provider() {
-      local alias="${1:?provider name required}"
-      case "$alias" in
-        ingress-nginx)         echo "ingress-nginx" ;;
-        apisix|apisix-ingress) echo "apisix-ingress" ;;
-        kgateway)              echo "kgateway" ;;
-        *)
-          echo "ERROR: Unknown provider '${alias}'." \
-               "Supported: ingress-nginx, apisix, apisix-ingress, kgateway" >&2
-          return 1 ;;
-      esac
-    }
-
+        # Migration Execution Function
     run_migration() {
         local ns=$1
         local ingress2gateway_bin="${INGRESS2GATEWAY_BIN:-ingress2gateway}"

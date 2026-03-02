@@ -38,8 +38,8 @@ trigger ConfigMap
   dispatch_provider("apisix")
         │
         ├── ingress-nginx   →  --providers=ingress-nginx  (ingress2gateway)
-        ├── apisix          →  --providers=apisix-ingress (ingress2gateway)
-        ├── apisix-ingress  →  --providers=apisix-ingress (ingress2gateway)
+      ├── apisix          →  --providers=apisix         (ingress2gateway)
+      ├── apisix-ingress  →  --providers=apisix         (ingress2gateway)
         └── kgateway        →  --providers=kgateway       (ingress2gateway)
 ```
 
@@ -48,8 +48,8 @@ trigger ConfigMap
 | Annotation value     | ingress2gateway flag    | Notes                              |
 |----------------------|-------------------------|------------------------------------|
 | `ingress-nginx`      | `--providers=ingress-nginx`  | Default; NGINX community ingress  |
-| `apisix`             | `--providers=apisix-ingress` | Alias for apisix-ingress           |
-| `apisix-ingress`     | `--providers=apisix-ingress` | Apache APISIX ingress controller  |
+| `apisix`             | `--providers=apisix` | Apache APISIX provider              |
+| `apisix-ingress`     | `--providers=apisix` | Alias for apisix                    |
 | `kgateway`           | `--providers=kgateway`       | Kong's OSS Gateway (Kgateway)     |
 
 **Adding a new provider:** Add a case to `dispatch_provider()` in `scripts/migrate.sh`. If the provider requires a different binary, replace the `ingress2gateway` invocation inside the appropriate case branch.
@@ -194,6 +194,6 @@ Broken/syntactically-invalid scripts now fail the build rather than shipping sil
 
 ## Open Questions
 
-1. **ingress2gateway version**: v0.5.0 supports `apisix-ingress` and `kgateway` — confirm with the ingress2gateway release notes before enabling these in production.
+1. **ingress2gateway version**: v0.5.0 supports `apisix` and `kgateway` — confirm with the ingress2gateway release notes before enabling these in production.
 2. **Gateway CR ownership**: When a trigger applies the migration, should the operator also create the Gateway CR, or assume it pre-exists? Currently it assumes pre-existence.
 3. **Status history**: The current patch overwrites `data.lastRun`. Should we keep a ring-buffer of recent runs (e.g., `lastRuns` as a JSON array)?

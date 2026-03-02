@@ -106,5 +106,19 @@ bash ./tests/run-manual.sh
 E2E_KIND=1 bash ./tests/run-e2e.sh
 ```
 
+### Run APISIX provider E2E (Kind)
+
+This validates provider dispatch + conversion for the `apisix` provider. When you run it on Kind, the test runner will also install Apache APISIX + the APISIX Ingress Controller (IngressClass `apisix`) into the Kind cluster.
+
+```bash
+E2E_KIND=1 \
+   E2E_TRIGGER_MANIFEST=trigger-apisix-dryrun.yaml \
+   bash ./tests/run-e2e.sh
+```
+
+Notes:
+- Auto-install is only enabled by default when `E2E_KIND=1` (so it won't modify a shared cluster unexpectedly).
+- To force install on your current kubecontext cluster, set `E2E_INSTALL_APISIX=1`.
+
 ### 🧠 How does it work?
 The tool intercepts `ConfigMap` Create/Update events annotated with `ingress-migration.flant.com/*` using Flant Shell operator events and safely processes them using inline Bash executing `ingress2gateway`. No massive Go builds, purely composable binaries!
