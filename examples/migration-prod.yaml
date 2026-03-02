@@ -12,7 +12,7 @@ metadata:
     ingress-migration.flant.com/dry-run: "true"
     ingress-migration.flant.com/namespace-selector: "env=prod"
     # Optional: history tracking (best-effort)
-    ingress-migration.flant.com/cluster-id: "minikube"
+    ingress-migration.flant.com/cluster-id: "kind"
     ingress-migration.flant.com/initiator: "your.name@example.com"
 data:
   # The shell operator will automatically patch the result of the migration here!

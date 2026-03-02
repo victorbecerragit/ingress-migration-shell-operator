@@ -15,7 +15,7 @@
 ## 📦 Quickstart
 
 ### Prerequisites
-* Kubernetes Cluster (tested on `minikube`)
+* Kubernetes Cluster (tested on `kind`)
 * Helm v3
 * `ingress2gateway` available in the operator image (tests auto-download it)
 * A Gateway API implementation/controller in your cluster (and any provider-specific CRDs if you enable a provider like `kong`)
@@ -31,10 +31,10 @@ helm upgrade --install ingress-migrator ./ \
   --set replicaCount=1
 ```
 
-### ⛵ Minikube Test Drive
-1. Apply the demo NGINX resources in a simulated `prod` environment:
+### ⛵ Kind Test Drive
+1. Apply the demo NGINX resources in a simulated `prod` environment (this works on any cluster, including Kind):
    ```bash
-   kubectl apply -f examples/minikube-test.yaml
+   kubectl apply -f examples/kind-test.yaml
    ```
 
 2. Trigger the migration with `dry-run: "true"` to preview:
