@@ -6,15 +6,15 @@ set -euo pipefail
 
 # Shared libraries.
 # shellcheck source=/dev/null
-if [[ -f /hooks/status.sh ]]; then
-  source /hooks/status.sh
+if [[ -f /usr/local/lib/hooks/status.sh ]]; then
+  source /usr/local/lib/hooks/status.sh
 else
   source "$(dirname "$0")/lib/status.sh"
 fi
 
 # shellcheck source=/dev/null
-if [[ -f /hooks/history.sh ]]; then
-  source /hooks/history.sh
+if [[ -f /usr/local/lib/hooks/history.sh ]]; then
+  source /usr/local/lib/hooks/history.sh
 else
   source "$(dirname "$0")/lib/history.sh"
 fi
@@ -32,6 +32,7 @@ kubernetes:
   labelSelector:
     matchLabels:
       ingress-migration.flant.com/rollback: "true"
+  jqFilter: '.metadata.annotations'
 EOF
   exit 0
 fi

@@ -27,8 +27,30 @@ spec:
           volumeMounts:
             - name: hooks
               mountPath: /hooks
+            - name: hooks-lib
+              mountPath: /usr/local/lib/hooks
       volumes:
         - name: hooks
           configMap:
             name: {{ .Release.Name }}-ingress-migration-scripts
             defaultMode: 0755
+            items:
+              - key: migrate.sh
+                path: migrate.sh
+              - key: validate.sh
+                path: validate.sh
+              - key: rollback.sh
+                path: rollback.sh
+        - name: hooks-lib
+          configMap:
+            name: {{ .Release.Name }}-ingress-migration-scripts
+            defaultMode: 0644
+            items:
+              - key: status.sh
+                path: status.sh
+              - key: history.sh
+                path: history.sh
+              - key: provider.sh
+                path: provider.sh
+              - key: nginx_gotchas.sh
+                path: nginx_gotchas.sh

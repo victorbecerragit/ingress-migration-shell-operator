@@ -32,13 +32,14 @@ RUN ARCH_NAME=$([ "$TARGETARCH" = "amd64" ] && echo "x86_64" || echo "arm64") &&
 # At runtime, the Helm chart overwrites /hooks/ via a ConfigMap volume mount.
 # ---------------------------------------------------------------------------
 COPY scripts/ /hooks/
-# Flatten lib/status.sh to /hooks/status.sh -- matches the ConfigMap key name
-# and the path that hooks source at runtime.
-RUN cp /hooks/lib/status.sh /hooks/status.sh && \
-  cp /hooks/lib/history.sh /hooks/history.sh && \
-  cp /hooks/lib/provider.sh /hooks/provider.sh && \
-  cp /hooks/lib/nginx_gotchas.sh /hooks/nginx_gotchas.sh && \
-  chmod +x /hooks/*.sh
+# Copy library scripts to /usr/local/lib/hooks/ so shell-operator does not
+# discover them as hooks (it only scans /hooks/).
+RUN mkdir -p /usr/local/lib/hooks && \
+  cp /hooks/lib/status.sh /usr/local/lib/hooks/status.sh && \
+  cp /hooks/lib/history.sh /usr/local/lib/hooks/history.sh && \
+  cp /hooks/lib/provider.sh /usr/local/lib/hooks/provider.sh && \
+  cp /hooks/lib/nginx_gotchas.sh /usr/local/lib/hooks/nginx_gotchas.sh && \
+  chmod +x /hooks/migrate.sh /hooks/validate.sh /hooks/rollback.sh
 
 RUN echo '=== smoke-testing hook --config paths ==' && \
     bash /hooks/migrate.sh  --config >/dev/null && echo 'migrate.sh  OK' && \
