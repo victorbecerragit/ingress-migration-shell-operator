@@ -163,12 +163,15 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
                     MANIFEST_HASH_INPUT+="$out_hash\n"
                 fi
 
-        # Override gatewayClassName if the trigger specifies a target class
+        # Override gatewayClassName if the trigger specifies a target class.
+        # Note: ingress2gateway prints YAML with indentation (e.g. "  gatewayClassName: nginx").
+        # Preserve indentation when overriding.
         if [ -n "${GATEWAY_CLASS:-}" ]; then
             OUT=$(
                 printf '%s\n' "$OUT" | while IFS= read -r line; do
-                    if [[ "$line" == gatewayClassName:* ]]; then
-                        printf 'gatewayClassName: %s\n' "$GATEWAY_CLASS"
+                    if [[ "$line" =~ ^([[:space:]]*)gatewayClassName:[[:space:]]*.*$ ]]; then
+                        indent="${BASH_REMATCH[1]}"
+                        printf '%sgatewayClassName: %s\n' "$indent" "$GATEWAY_CLASS"
                     else
                         printf '%s\n' "$line"
                     fi

@@ -87,12 +87,23 @@ info "cloud-provider-kind provisions a LoadBalancer for the Gateway..."
 info "This may take up to 30 seconds."
 echo ""
 
+EXPECTED_GW_CLASS=$(kubectl get configmap migrate-ingress-demo -n demo-prod \
+  -o jsonpath='{.metadata.annotations.ingress-migration\.flant\.com/gateway-class}' 2>/dev/null || true)
+
 GW_IP=""
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   PROGRAMMED=$(kubectl get gateway nginx -n demo-prod \
     -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || true)
+  GW_CLASS=$(kubectl get gateway nginx -n demo-prod \
+    -o jsonpath='{.spec.gatewayClassName}' 2>/dev/null || true)
   GW_IP=$(kubectl get gateway nginx -n demo-prod \
     -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+
+  if [ -n "${EXPECTED_GW_CLASS:-}" ] && [ -n "${GW_CLASS:-}" ] && [ "$GW_CLASS" != "$EXPECTED_GW_CLASS" ]; then
+    warn "Gateway spec.gatewayClassName is '$GW_CLASS' but trigger expects '$EXPECTED_GW_CLASS'"
+    warn "This usually means the hook didn't override gatewayClassName (or you ran an older version of the scripts)."
+    break
+  fi
 
   if [ "${PROGRAMMED}" == "True" ] && [ -n "$GW_IP" ]; then
     break
@@ -104,7 +115,13 @@ echo ""
 
 if [ -z "$GW_IP" ]; then
   warn "Gateway address not yet assigned. Checking status..."
+  if [ -n "${EXPECTED_GW_CLASS:-}" ]; then
+    info "Expected GatewayClass (from trigger): ${EXPECTED_GW_CLASS}"
+  fi
   cmd "kubectl get gateway nginx -n demo-prod -o yaml"
+  echo ""
+  warn "Available GatewayClasses:"
+  cmd "kubectl get gatewayclass"
   die "Gateway did not become ready. Check: docker logs cloud-provider-kind"
 fi
 
