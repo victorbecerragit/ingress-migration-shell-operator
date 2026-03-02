@@ -26,6 +26,13 @@ else
     source "$(dirname "$0")/lib/provider.sh"
 fi
 
+# shellcheck source=/dev/null
+if [[ -f /hooks/nginx_gotchas.sh ]]; then
+    source /hooks/nginx_gotchas.sh
+else
+    source "$(dirname "$0")/lib/nginx_gotchas.sh"
+fi
+
 # Flant shell-operator binding configuration
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
@@ -107,10 +114,40 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     ENDPOINT_COUNT=0
     APPLIED="false"
     ERROR_MSG="none"
+    NGINX_WARNINGS_COUNT="0"
+    NGINX_WARNINGS_TEXT=""
     BEFORE_INGRESS_COUNT=0
     BEFORE_INGRESS_SAMPLE=""
     NS_LIST=""
     MANIFEST_HASH_INPUT=""
+
+    preflight_nginx_gotchas() {
+        local provider_flag
+        if ! provider_flag=$(dispatch_provider "$PROVIDERS"); then
+            return 0
+        fi
+        if [[ "$provider_flag" != "ingress-nginx" ]]; then
+            return 0
+        fi
+
+        local ingress_list
+        ingress_list=$(kubectl get ingress -A -o json 2>/dev/null || echo '{"items":[]}')
+
+        local namespaces_json=""
+        if [[ -n "${TARGET_NAMESPACES:-}" ]]; then
+            namespaces_json=$(printf '%s' "$TARGET_NAMESPACES" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
+        fi
+
+        local warnings_json
+        if ! warnings_json=$(NGINX_GOTCHAS_NAMESPACES_JSON="$namespaces_json" nginx_gotchas_warnings_from_ingress_list <<<"$ingress_list" 2>/dev/null); then
+            warnings_json="[]"
+        fi
+
+        NGINX_WARNINGS_COUNT=$(jq -r 'length' <<<"$warnings_json" 2>/dev/null || echo "0")
+        if [[ "$NGINX_WARNINGS_COUNT" != "0" ]]; then
+            NGINX_WARNINGS_TEXT=$(jq -r '.[0:20][] | "[" + .code + "] " + .message + (if .host then " host=" + .host else "" end) + (if .ingress then " ingress=" + .ingress else "" end) + (if .path then " path=" + .path else "" end)' <<<"$warnings_json" 2>/dev/null || true)
+        fi
+    }
 
         # Migration Execution Function
     run_migration() {
@@ -341,6 +378,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     }
 
     if [ -n "$TARGET_NAMESPACES" ]; then
+        preflight_nginx_gotchas || true
         for namespace in $TARGET_NAMESPACES; do
             NS_LIST+="$namespace "
             # Snapshot existing ingresses (best-effort, bounded sample)
@@ -357,6 +395,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         done
     else
         NS_LIST+="<cluster-wide> "
+        preflight_nginx_gotchas || true
         local_ing_count=$(kubectl get ingress -A -o name 2>/dev/null | wc -l | tr -d ' ' || echo "0")
         BEFORE_INGRESS_COUNT=$((BEFORE_INGRESS_COUNT + local_ing_count))
         BEFORE_INGRESS_SAMPLE=$(kubectl get ingress -A -o name 2>/dev/null | head -n 10 || true)
@@ -377,8 +416,10 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
       --arg epcount "$ENDPOINT_COUNT" \
       --arg applied "$APPLIED" \
       --arg error "$ERROR_MSG" \
+            --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+            --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
       --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date}}')
+            '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date, nginxPreflightWarningsCount: $nginxWarningsCount, nginxPreflightWarnings: $nginxWarnings}}')
       
     patch_status "$CM_NAME" "$CM_NAMESPACE" "$STATUS_PAYLOAD"
 
@@ -413,6 +454,8 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
                 --arg migratedEndpoints "$ENDPOINT_COUNT" \
                 --arg applied "$APPLIED" \
                 --arg error "$ERROR_MSG" \
+                --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+                --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
                 --arg manifestHash "$manifest_hash" \
                 --arg beforeIngressCount "$BEFORE_INGRESS_COUNT" \
                 --argjson beforeIngressSample "$ingress_sample_json" \
@@ -421,7 +464,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
                     trigger:{namespace:$triggerNs, name:$triggerName},
                     config:{providers:$providers, dryRun:$dryRun, namespaceSelector:$nsSelector, migrateEndpoints:$migrateEndpoints, gatewayClass:$gatewayClass},
                     before:{ingressCount:$beforeIngressCount, ingressSample:$beforeIngressSample},
-                    after:{httpRoutes:$convertedResources, gateways:$convertedGateways, endpointSlicesConverted:$migratedEndpoints, applied:$applied, error:$error, manifestHash:$manifestHash},
+                    after:{httpRoutes:$convertedResources, gateways:$convertedGateways, endpointSlicesConverted:$migratedEndpoints, applied:$applied, error:$error, manifestHash:$manifestHash, nginxPreflightWarningsCount:$nginxWarningsCount, nginxPreflightWarnings:$nginxWarnings},
                     namespaces:$namespaces
                 }')
 

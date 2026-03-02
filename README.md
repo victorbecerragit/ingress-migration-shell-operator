@@ -120,6 +120,12 @@ Notes:
 - If `ingress2gateway` is not installed, the test runner auto-downloads the pinned version into `tests/.bin/`.
 - The mock E2E trigger uses `providers=ingress-nginx` so it can run on a plain cluster without Kong CRDs installed.
 
+Tip: Regex-style paths are intentionally avoided in E2E fixtures
+- Many real Ingress-NGINX regex examples use `pathType: ImplementationSpecific` (and/or regex-like path strings).
+- `ingress2gateway`'s generic translation does **not** support `ImplementationSpecific` pathType, so those manifests can fail conversion.
+- Also, `ingress-nginx`'s validating webhook can reject regex-like paths when `pathType: Prefix`.
+- For portable tests, the fixtures use plain `Prefix` paths but keep annotations like `use-regex` and `rewrite-target` so the preflight scanner still warns about the risky behavior.
+
 ### Run against your current cluster
 ```bash
 bash ./tests/run-e2e.sh

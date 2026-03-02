@@ -1,9 +1,10 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/victor-becerra/ingress-migration-shell-operator
+  repository: victorbecerra/ingress-migration-shell-operator
   pullPolicy: IfNotPresent
-  tag: "latest"
+  # Leave empty to default to the chart's appVersion.
+  tag: ""
 
 serviceAccount:
   create: true

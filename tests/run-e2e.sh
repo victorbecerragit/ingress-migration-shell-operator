@@ -158,6 +158,11 @@ echo "Applying mock cluster resources..."
 kubectl apply -f "$MANIFEST_DIR/mock-cluster.yaml" >/dev/null
 kubectl apply -f "$MANIFEST_DIR/$TRIGGER_MANIFEST" >/dev/null
 
+if [[ -d "$MANIFEST_DIR/nginx" ]]; then
+  echo "Applying ingress-nginx fixture manifests..."
+  kubectl apply -f "$MANIFEST_DIR/nginx" >/dev/null
+fi
+
 OBJ_FILE=$(mktemp)
 CTX_FILE=$(mktemp)
 
@@ -204,5 +209,29 @@ if [[ "$convertedResources" -lt 1 ]]; then
 fi
 
 echo "PASS: convertedResources=$convertedResources applied=$applied error=$error"
+
+providers=$(kubectl get configmap "$CM_NAME" -n "$CM_NAMESPACE" -o json | jq -r '.metadata.annotations["ingress-migration.flant.com/providers"] // ""')
+if [[ "$providers" == "ingress-nginx" ]]; then
+  nginxWarningsCount=$(kubectl get configmap "$CM_NAME" -n "$CM_NAMESPACE" -o json | jq -r '.data.nginxPreflightWarningsCount // ""')
+  nginxWarnings=$(kubectl get configmap "$CM_NAME" -n "$CM_NAMESPACE" -o json | jq -r '.data.nginxPreflightWarnings // ""')
+
+  if [[ -z "$nginxWarningsCount" ]]; then
+    die "Expected .data.nginxPreflightWarningsCount to be set for ingress-nginx provider"
+  fi
+
+  if ! [[ "$nginxWarningsCount" =~ ^[0-9]+$ ]]; then
+    die "Expected nginxPreflightWarningsCount to be an integer, got: '$nginxWarningsCount'"
+  fi
+
+  if [[ "$nginxWarningsCount" -lt 1 ]]; then
+    die "Expected nginxPreflightWarningsCount >= 1 for ingress-nginx provider, got: '$nginxWarningsCount'"
+  fi
+
+  echo "$nginxWarnings" | grep -q "NGINX_REWRITE_TARGET_IMPLIES_REGEX" || die "Expected rewrite-target gotcha warning to be present"
+  echo "$nginxWarnings" | grep -q "NGINX_REGEX_HOST_WIDE" || die "Expected host-wide regex gotcha warning to be present"
+  echo "$nginxWarnings" | grep -q "NGINX_TRAILING_SLASH_REDIRECT" || die "Expected trailing-slash gotcha warning to be present"
+
+  echo "PASS: nginxPreflightWarningsCount=$nginxWarningsCount"
+fi
 
 echo "Used trigger manifest: $TRIGGER_MANIFEST"

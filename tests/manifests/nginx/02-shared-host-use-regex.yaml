@@ -1,0 +1,40 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sharedhost-regex
+  namespace: ingress-migration-mock
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: foor.bar.com
+    http:
+      paths:
+      - path: /hello-front
+        pathType: Prefix
+        backend:
+          service:
+            name: front
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sharedhost-exact
+  namespace: ingress-migration-mock
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: foor.bar.com
+    http:
+      paths:
+      - path: /admin/
+        pathType: Exact
+        backend:
+          service:
+            name: backend-secured
+            port:
+              number: 80

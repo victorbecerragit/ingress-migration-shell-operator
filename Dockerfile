@@ -35,7 +35,10 @@ COPY scripts/ /hooks/
 # Flatten lib/status.sh to /hooks/status.sh -- matches the ConfigMap key name
 # and the path that hooks source at runtime.
 RUN cp /hooks/lib/status.sh /hooks/status.sh && \
-    chmod +x /hooks/*.sh
+  cp /hooks/lib/history.sh /hooks/history.sh && \
+  cp /hooks/lib/provider.sh /hooks/provider.sh && \
+  cp /hooks/lib/nginx_gotchas.sh /hooks/nginx_gotchas.sh && \
+  chmod +x /hooks/*.sh
 
 RUN echo '=== smoke-testing hook --config paths ==' && \
     bash /hooks/migrate.sh  --config >/dev/null && echo 'migrate.sh  OK' && \

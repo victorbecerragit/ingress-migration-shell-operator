@@ -56,7 +56,7 @@ jobs:
       - name: Get version from Helm chart
         id: chart-version
         run: |
-          VERSION=$(grep '^appVersion:' Chart.yaml | awk '{print $2}' | tr -d '"')
+          VERSION=$(awk -F': *' '/^version:/{print $2; exit}' Chart.yaml | tr -d '"')
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Docker image tag: ${VERSION}"
 
