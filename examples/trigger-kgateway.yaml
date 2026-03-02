@@ -1,0 +1,18 @@
+# Example trigger ConfigMap targeting a specific Gateway API implementation via gateway-class.
+# IMPORTANT: `kgateway` here is a GatewayClass name (target controller), not an ingress2gateway provider.
+# Note: ingress-migration.flant.com/namespace-selector matches Namespace labels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-kgateway
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "ingress-nginx"
+    ingress-migration.flant.com/dry-run: "true"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+    ingress-migration.flant.com/gateway-class: "kgateway"
+data:
+  note: "Example trigger — dry-run (provider=ingress-nginx, target GatewayClass=kgateway)"

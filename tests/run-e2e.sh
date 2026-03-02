@@ -11,6 +11,9 @@ VERBOSE=${E2E_VERBOSE:-0}
 
 CM_NAMESPACE=${E2E_CM_NAMESPACE:-ingress-migration-mock}
 CM_NAME=${E2E_CM_NAME:-migrate-ingress-mock}
+TRIGGER_MANIFEST=${E2E_TRIGGER_MANIFEST:-trigger-dryrun.yaml}
+E2E_INSTALL_APISIX=${E2E_INSTALL_APISIX:-auto}
+E2E_INSTALL_KGATEWAY=${E2E_INSTALL_KGATEWAY:-auto}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -96,6 +99,52 @@ if [[ "$USE_KIND" == "1" ]]; then
   fi
 fi
 
+if [[ "$TRIGGER_MANIFEST" == *"apisix"* ]]; then
+  case "$E2E_INSTALL_APISIX" in
+    1|true|yes)
+      echo "Installing APISIX (forced via E2E_INSTALL_APISIX=$E2E_INSTALL_APISIX)"
+      bash "$ROOT_DIR/tests/lib/install-apisix.sh"
+      ;;
+    auto)
+      if [[ "$USE_KIND" == "1" ]]; then
+        echo "Installing APISIX (auto; Kind E2E + APISIX trigger)"
+        bash "$ROOT_DIR/tests/lib/install-apisix.sh"
+      else
+        echo "Skipping APISIX install (E2E_KIND!=1). Set E2E_INSTALL_APISIX=1 to install on the current cluster."
+      fi
+      ;;
+    0|false|no)
+      echo "Skipping APISIX install (E2E_INSTALL_APISIX=$E2E_INSTALL_APISIX)"
+      ;;
+    *)
+      die "Invalid E2E_INSTALL_APISIX value: '$E2E_INSTALL_APISIX' (use auto|1|0)"
+      ;;
+  esac
+fi
+
+if [[ "$TRIGGER_MANIFEST" == *"kgateway"* ]]; then
+  case "$E2E_INSTALL_KGATEWAY" in
+    1|true|yes)
+      echo "Installing kgateway-dev (forced via E2E_INSTALL_KGATEWAY=$E2E_INSTALL_KGATEWAY)"
+      bash "$ROOT_DIR/tests/lib/install-kgateway.sh"
+      ;;
+    auto)
+      if [[ "$USE_KIND" == "1" ]]; then
+        echo "Installing kgateway-dev (auto; Kind E2E + kgateway trigger)"
+        bash "$ROOT_DIR/tests/lib/install-kgateway.sh"
+      else
+        echo "Skipping kgateway-dev install (E2E_KIND!=1). Set E2E_INSTALL_KGATEWAY=1 to install on the current cluster."
+      fi
+      ;;
+    0|false|no)
+      echo "Skipping kgateway-dev install (E2E_INSTALL_KGATEWAY=$E2E_INSTALL_KGATEWAY)"
+      ;;
+    *)
+      die "Invalid E2E_INSTALL_KGATEWAY value: '$E2E_INSTALL_KGATEWAY' (use auto|1|0)"
+      ;;
+  esac
+fi
+
 cleanup() {
   rm -f "${OBJ_FILE:-}" "${CTX_FILE:-}" "${HOOK_LOG:-}" 2>/dev/null || true
   if [[ "$KIND_CREATED" == "1" ]]; then
@@ -107,7 +156,12 @@ trap cleanup EXIT
 
 echo "Applying mock cluster resources..."
 kubectl apply -f "$MANIFEST_DIR/mock-cluster.yaml" >/dev/null
-kubectl apply -f "$MANIFEST_DIR/trigger-dryrun.yaml" >/dev/null
+kubectl apply -f "$MANIFEST_DIR/$TRIGGER_MANIFEST" >/dev/null
+
+if [[ -d "$MANIFEST_DIR/nginx" ]]; then
+  echo "Applying ingress-nginx fixture manifests..."
+  kubectl apply -f "$MANIFEST_DIR/nginx" >/dev/null
+fi
 
 OBJ_FILE=$(mktemp)
 CTX_FILE=$(mktemp)
@@ -155,3 +209,29 @@ if [[ "$convertedResources" -lt 1 ]]; then
 fi
 
 echo "PASS: convertedResources=$convertedResources applied=$applied error=$error"
+
+providers=$(kubectl get configmap "$CM_NAME" -n "$CM_NAMESPACE" -o json | jq -r '.metadata.annotations["ingress-migration.flant.com/providers"] // ""')
+if [[ "$providers" == "ingress-nginx" ]]; then
+  nginxWarningsCount=$(kubectl get configmap "$CM_NAME" -n "$CM_NAMESPACE" -o json | jq -r '.data.nginxPreflightWarningsCount // ""')
+  nginxWarnings=$(kubectl get configmap "$CM_NAME" -n "$CM_NAMESPACE" -o json | jq -r '.data.nginxPreflightWarnings // ""')
+
+  if [[ -z "$nginxWarningsCount" ]]; then
+    die "Expected .data.nginxPreflightWarningsCount to be set for ingress-nginx provider"
+  fi
+
+  if ! [[ "$nginxWarningsCount" =~ ^[0-9]+$ ]]; then
+    die "Expected nginxPreflightWarningsCount to be an integer, got: '$nginxWarningsCount'"
+  fi
+
+  if [[ "$nginxWarningsCount" -lt 1 ]]; then
+    die "Expected nginxPreflightWarningsCount >= 1 for ingress-nginx provider, got: '$nginxWarningsCount'"
+  fi
+
+  echo "$nginxWarnings" | grep -q "NGINX_REWRITE_TARGET_IMPLIES_REGEX" || die "Expected rewrite-target gotcha warning to be present"
+  echo "$nginxWarnings" | grep -q "NGINX_REGEX_HOST_WIDE" || die "Expected host-wide regex gotcha warning to be present"
+  echo "$nginxWarnings" | grep -q "NGINX_TRAILING_SLASH_REDIRECT" || die "Expected trailing-slash gotcha warning to be present"
+
+  echo "PASS: nginxPreflightWarningsCount=$nginxWarningsCount"
+fi
+
+echo "Used trigger manifest: $TRIGGER_MANIFEST"

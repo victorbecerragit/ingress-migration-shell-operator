@@ -2,6 +2,37 @@
 
 set -euo pipefail
 
+# Shared libraries.
+# - In-cluster: mounted from ConfigMap at runtime via /hooks/
+# - Local/tests: fall back to scripts/lib/
+# shellcheck source=/dev/null
+if [[ -f /hooks/status.sh ]]; then
+    source /hooks/status.sh
+else
+    source "$(dirname "$0")/lib/status.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/history.sh ]]; then
+    source /hooks/history.sh
+else
+    source "$(dirname "$0")/lib/history.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/provider.sh ]]; then
+    source /hooks/provider.sh
+else
+    source "$(dirname "$0")/lib/provider.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/nginx_gotchas.sh ]]; then
+    source /hooks/nginx_gotchas.sh
+else
+    source "$(dirname "$0")/lib/nginx_gotchas.sh"
+fi
+
 # Flant shell-operator binding configuration
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
@@ -44,6 +75,25 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     MIGRATE_ENDPOINTS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/migrate-endpoints"] // "false"')
     GATEWAY_CLASS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/gateway-class"] // ""')
 
+        # History configuration (enabled by default)
+        HISTORY_ENABLED=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-enabled"] // "true"')
+        HISTORY_CM=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-configmap"] // "ingress-migration-history"')
+        HISTORY_MAX=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-max-entries"] // "100"')
+        INITIATOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/initiator"] // ""')
+        CLUSTER_ID=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/cluster-id"] // ""')
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID="${CLUSTER_ID:-${CLUSTER_ID_ENV:-}}"
+        fi
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID="${CLUSTER_ID:-${KUBERNETES_SERVICE_HOST:-}}"
+        fi
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID=$(kubectl config current-context 2>/dev/null || true)
+        fi
+        if [[ -z "$CLUSTER_ID" ]]; then
+            CLUSTER_ID="unknown"
+        fi
+
     echo "Migration Triggered: $CM_NAMESPACE/$CM_NAME (DryRun: $DRY_RUN, Providers: $PROVIDERS, Selector: $NS_SELECTOR, MigrateEndpoints: $MIGRATE_ENDPOINTS, GatewayClass: ${GATEWAY_CLASS:-<default>})"
 
     # Gather namespaces based on selector
@@ -53,17 +103,53 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         if [ -z "$TARGET_NAMESPACES" ]; then
             echo "No namespaces matched the selector $NS_SELECTOR. Exiting..."
             # Update status
-            kubectl patch configmap "$CM_NAME" -n "$CM_NAMESPACE" --type merge -p "{\"data\": {\"error\": \"No matching namespaces\", \"lastRun\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+            patch_status "$CM_NAME" "$CM_NAMESPACE" \
+              "{\"data\": {\"error\": \"No matching namespaces\", \"lastRun\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
             continue
         fi
     fi
 
     COUNT=0
+    GW_COUNT=0
     ENDPOINT_COUNT=0
     APPLIED="false"
     ERROR_MSG="none"
+    NGINX_WARNINGS_COUNT="0"
+    NGINX_WARNINGS_TEXT=""
+    BEFORE_INGRESS_COUNT=0
+    BEFORE_INGRESS_SAMPLE=""
+    NS_LIST=""
+    MANIFEST_HASH_INPUT=""
 
-    # Migration Execution Function
+    preflight_nginx_gotchas() {
+        local provider_flag
+        if ! provider_flag=$(dispatch_provider "$PROVIDERS"); then
+            return 0
+        fi
+        if [[ "$provider_flag" != "ingress-nginx" ]]; then
+            return 0
+        fi
+
+        local ingress_list
+        ingress_list=$(kubectl get ingress -A -o json 2>/dev/null || echo '{"items":[]}')
+
+        local namespaces_json=""
+        if [[ -n "${TARGET_NAMESPACES:-}" ]]; then
+            namespaces_json=$(printf '%s' "$TARGET_NAMESPACES" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
+        fi
+
+        local warnings_json
+        if ! warnings_json=$(NGINX_GOTCHAS_NAMESPACES_JSON="$namespaces_json" nginx_gotchas_warnings_from_ingress_list <<<"$ingress_list" 2>/dev/null); then
+            warnings_json="[]"
+        fi
+
+        NGINX_WARNINGS_COUNT=$(jq -r 'length' <<<"$warnings_json" 2>/dev/null || echo "0")
+        if [[ "$NGINX_WARNINGS_COUNT" != "0" ]]; then
+            NGINX_WARNINGS_TEXT=$(jq -r '.[0:20][] | "[" + .code + "] " + .message + (if .host then " host=" + .host else "" end) + (if .ingress then " ingress=" + .ingress else "" end) + (if .path then " path=" + .path else "" end)' <<<"$warnings_json" 2>/dev/null || true)
+        fi
+    }
+
+        # Migration Execution Function
     run_migration() {
         local ns=$1
         local ingress2gateway_bin="${INGRESS2GATEWAY_BIN:-ingress2gateway}"
@@ -75,7 +161,13 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         fi
         
         local -a args
-        args=(print "--providers=$PROVIDERS")
+        local provider_flag
+        if ! provider_flag=$(dispatch_provider "$PROVIDERS"); then
+          echo "Error: unsupported provider '$PROVIDERS'"
+          ERROR_MSG="unknown_provider"
+          return 1
+        fi
+        args=(print "--providers=${provider_flag}")
 
         if [ -n "$ns" ]; then
             echo "Converting in namespace: $ns"
@@ -91,12 +183,22 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
             return 1
         }
 
-        # Override gatewayClassName if the trigger specifies a target class
+                # Hash the generated manifests for history tracking
+                local out_hash
+                out_hash=$(printf '%s' "$OUT" | history_sha256_stdin)
+                if [[ -n "$out_hash" ]]; then
+                    MANIFEST_HASH_INPUT+="$out_hash\n"
+                fi
+
+        # Override gatewayClassName if the trigger specifies a target class.
+        # Note: ingress2gateway prints YAML with indentation (e.g. "  gatewayClassName: nginx").
+        # Preserve indentation when overriding.
         if [ -n "${GATEWAY_CLASS:-}" ]; then
             OUT=$(
                 printf '%s\n' "$OUT" | while IFS= read -r line; do
-                    if [[ "$line" == gatewayClassName:* ]]; then
-                        printf 'gatewayClassName: %s\n' "$GATEWAY_CLASS"
+                    if [[ "$line" =~ ^([[:space:]]*)gatewayClassName:[[:space:]]*.*$ ]]; then
+                        indent="${BASH_REMATCH[1]}"
+                        printf '%sgatewayClassName: %s\n' "$indent" "$GATEWAY_CLASS"
                     else
                         printf '%s\n' "$line"
                     fi
@@ -109,6 +211,10 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         local C
         C=$(echo "$OUT" | grep -c "kind: HTTPRoute" || true)
         COUNT=$((COUNT + C))
+
+        local G
+        G=$(echo "$OUT" | grep -c "kind: Gateway" || true)
+        GW_COUNT=$((GW_COUNT + G))
         
         if [ "$C" -gt 0 ]; then
             if [ "$DRY_RUN" == "false" ]; then
@@ -272,13 +378,27 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     }
 
     if [ -n "$TARGET_NAMESPACES" ]; then
+        preflight_nginx_gotchas || true
         for namespace in $TARGET_NAMESPACES; do
+            NS_LIST+="$namespace "
+            # Snapshot existing ingresses (best-effort, bounded sample)
+            local_ing_count=$(kubectl get ingress -n "$namespace" -o name 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            BEFORE_INGRESS_COUNT=$((BEFORE_INGRESS_COUNT + local_ing_count))
+            if [[ $(printf '%s' "$BEFORE_INGRESS_SAMPLE" | wc -l) -lt 20 ]]; then
+              BEFORE_INGRESS_SAMPLE+=$(kubectl get ingress -n "$namespace" -o name 2>/dev/null | head -n 5 | sed "s|^|$namespace/|" || true)
+              BEFORE_INGRESS_SAMPLE+="\n"
+            fi
             run_migration "$namespace" || break
             if [ "$MIGRATE_ENDPOINTS" = "true" ]; then
                 migrate_endpoints "$namespace"
             fi
         done
     else
+        NS_LIST+="<cluster-wide> "
+        preflight_nginx_gotchas || true
+        local_ing_count=$(kubectl get ingress -A -o name 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        BEFORE_INGRESS_COUNT=$((BEFORE_INGRESS_COUNT + local_ing_count))
+        BEFORE_INGRESS_SAMPLE=$(kubectl get ingress -A -o name 2>/dev/null | head -n 10 || true)
         run_migration ""
         if [ "$MIGRATE_ENDPOINTS" = "true" ]; then
             migrate_endpoints ""
@@ -296,10 +416,60 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
       --arg epcount "$ENDPOINT_COUNT" \
       --arg applied "$APPLIED" \
       --arg error "$ERROR_MSG" \
+            --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+            --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
       --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date}}')
+            '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date, nginxPreflightWarningsCount: $nginxWarningsCount, nginxPreflightWarnings: $nginxWarnings}}')
       
-    kubectl patch configmap "$CM_NAME" -n "$CM_NAMESPACE" --type merge -p "$STATUS_PAYLOAD"
+    patch_status "$CM_NAME" "$CM_NAMESPACE" "$STATUS_PAYLOAD"
+
+        # Append history entry (best-effort)
+        if [[ "$HISTORY_ENABLED" == "true" ]]; then
+            cluster_key=$(history_sanitize_key "$CLUSTER_ID")
+            data_key="history.${cluster_key}.jsonl"
+
+            manifest_hash=""
+            if [[ -n "$MANIFEST_HASH_INPUT" ]]; then
+                manifest_hash=$(printf '%b' "$MANIFEST_HASH_INPUT" | history_sha256_stdin)
+            fi
+
+            # Normalize the ingress sample as a JSON array (bounded)
+            ingress_sample_json=$(printf '%b' "$BEFORE_INGRESS_SAMPLE" | sed '/^\s*$/d' | head -n 20 | jq -R -s -c 'split("\n") | map(select(length>0))')
+            ns_list_json=$(printf '%s' "$NS_LIST" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
+
+            entry=$(jq -n -c \
+                --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --arg action "migrate" \
+                --arg clusterId "$CLUSTER_ID" \
+                --arg initiator "$INITIATOR" \
+                --arg triggerNs "$CM_NAMESPACE" \
+                --arg triggerName "$CM_NAME" \
+                --arg providers "$PROVIDERS" \
+                --arg dryRun "$DRY_RUN" \
+                --arg nsSelector "$NS_SELECTOR" \
+                --arg migrateEndpoints "$MIGRATE_ENDPOINTS" \
+                --arg gatewayClass "$GATEWAY_CLASS" \
+                --arg convertedResources "$COUNT" \
+                --arg convertedGateways "$GW_COUNT" \
+                --arg migratedEndpoints "$ENDPOINT_COUNT" \
+                --arg applied "$APPLIED" \
+                --arg error "$ERROR_MSG" \
+                --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+                --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
+                --arg manifestHash "$manifest_hash" \
+                --arg beforeIngressCount "$BEFORE_INGRESS_COUNT" \
+                --argjson beforeIngressSample "$ingress_sample_json" \
+                --argjson namespaces "$ns_list_json" \
+                '{ts:$ts, action:$action, clusterId:$clusterId, initiator:$initiator,
+                    trigger:{namespace:$triggerNs, name:$triggerName},
+                    config:{providers:$providers, dryRun:$dryRun, namespaceSelector:$nsSelector, migrateEndpoints:$migrateEndpoints, gatewayClass:$gatewayClass},
+                    before:{ingressCount:$beforeIngressCount, ingressSample:$beforeIngressSample},
+                    after:{httpRoutes:$convertedResources, gateways:$convertedGateways, endpointSlicesConverted:$migratedEndpoints, applied:$applied, error:$error, manifestHash:$manifestHash, nginxPreflightWarningsCount:$nginxWarningsCount, nginxPreflightWarnings:$nginxWarnings},
+                    namespaces:$namespaces
+                }')
+
+            history_append_jsonl "$CM_NAMESPACE" "$HISTORY_CM" "$data_key" "$entry" "$HISTORY_MAX" || true
+        fi
     echo "Migration processing complete for $CM_NAME."
   fi
 done

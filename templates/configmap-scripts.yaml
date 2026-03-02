@@ -9,3 +9,15 @@ data:
 {{ .Files.Get "scripts/validate.sh" | indent 4 }}
   rollback.sh: |-
 {{ .Files.Get "scripts/rollback.sh" | indent 4 }}
+  # status.sh is sourced by all hooks at /hooks/status.sh.
+  # ConfigMap keys cannot contain '/', so the lib/ prefix is dropped here.
+  status.sh: |-
+{{ .Files.Get "scripts/lib/status.sh" | indent 4 }}
+  nginx_gotchas.sh: |
+{{- .Files.Get "scripts/lib/nginx_gotchas.sh" | nindent 4 }}
+  # history.sh is sourced by hooks at /hooks/history.sh.
+  history.sh: |-
+{{ .Files.Get "scripts/lib/history.sh" | indent 4 }}
+  # provider.sh is sourced by hooks at /hooks/provider.sh.
+  provider.sh: |-
+{{ .Files.Get "scripts/lib/provider.sh" | indent 4 }}

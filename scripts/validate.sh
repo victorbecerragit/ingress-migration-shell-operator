@@ -4,6 +4,35 @@
 
 set -euo pipefail
 
+# Shared libraries.
+# shellcheck source=/dev/null
+if [[ -f /hooks/status.sh ]]; then
+  source /hooks/status.sh
+else
+  source "$(dirname "$0")/lib/status.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/history.sh ]]; then
+  source /hooks/history.sh
+else
+  source "$(dirname "$0")/lib/history.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/provider.sh ]]; then
+  source /hooks/provider.sh
+else
+  source "$(dirname "$0")/lib/provider.sh"
+fi
+
+# shellcheck source=/dev/null
+if [[ -f /hooks/nginx_gotchas.sh ]]; then
+  source /hooks/nginx_gotchas.sh
+else
+  source "$(dirname "$0")/lib/nginx_gotchas.sh"
+fi
+
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
 configVersion: v1
@@ -34,12 +63,82 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
        echo "Skipping event without ConfigMap object (type=$EVENT_TYPE)"
        continue
      fi
+
+     PROVIDERS=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/providers"] // "ingress-nginx"')
+     NS_SELECTOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/namespace-selector"] // ""')
+
+     HISTORY_ENABLED=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-enabled"] // "true"')
+     HISTORY_CM=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-configmap"] // "ingress-migration-history"')
+     HISTORY_MAX=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-max-entries"] // "100"')
+     INITIATOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/initiator"] // ""')
+     CLUSTER_ID=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/cluster-id"] // ""')
+     if [[ -z "$CLUSTER_ID" ]]; then
+       CLUSTER_ID="${KUBERNETES_SERVICE_HOST:-}"
+     fi
+     if [[ -z "$CLUSTER_ID" ]]; then
+       CLUSTER_ID=$(kubectl config current-context 2>/dev/null || true)
+     fi
+     if [[ -z "$CLUSTER_ID" ]]; then
+       CLUSTER_ID="unknown"
+     fi
      
-     # Future Validation logic placeholder: Check if HTTPRoutes exist and mirror endpoints
-     # Right now we just mark success if run.
+     NGINX_WARNINGS_COUNT="0"
+     NGINX_WARNINGS_TEXT=""
+
+     provider_flag=""
+     if provider_flag=$(dispatch_provider "$PROVIDERS" 2>/dev/null); then
+       if [[ "$provider_flag" == "ingress-nginx" ]]; then
+         TARGET_NAMESPACES=""
+         if [[ -n "$NS_SELECTOR" ]]; then
+           TARGET_NAMESPACES=$(kubectl get ns -l "$NS_SELECTOR" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+         fi
+
+         ingress_list=$(kubectl get ingress -A -o json 2>/dev/null || echo '{"items":[]}')
+         namespaces_json=""
+         if [[ -n "$TARGET_NAMESPACES" ]]; then
+           namespaces_json=$(printf '%s' "$TARGET_NAMESPACES" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
+         fi
+
+         warnings_json="[]"
+         if warnings_json=$(NGINX_GOTCHAS_NAMESPACES_JSON="$namespaces_json" nginx_gotchas_warnings_from_ingress_list <<<"$ingress_list" 2>/dev/null); then
+           true
+         fi
+
+         NGINX_WARNINGS_COUNT=$(jq -r 'length' <<<"$warnings_json" 2>/dev/null || echo "0")
+         if [[ "$NGINX_WARNINGS_COUNT" != "0" ]]; then
+           NGINX_WARNINGS_TEXT=$(jq -r '.[0:20][] | "[" + .code + "] " + .message + (if .host then " host=" + .host else "" end) + (if .ingress then " ingress=" + .ingress else "" end) + (if .path then " path=" + .path else "" end)' <<<"$warnings_json" 2>/dev/null || true)
+         fi
+       fi
+     fi
+
      echo "Validation checks passed."
      
      # Patch status
-     kubectl patch configmap "$CM_NAME" -n "$CM_NAMESPACE" --type merge -p "{\"data\": {\"validation\": \"success\", \"validatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+     STATUS_PAYLOAD=$(jq -n \
+       --arg validation "success" \
+       --arg validatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+       --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
+       '{data: {validation: $validation, validatedAt: $validatedAt, nginxPreflightWarningsCount: $nginxWarningsCount, nginxPreflightWarnings: $nginxWarnings}}')
+     patch_status "$CM_NAME" "$CM_NAMESPACE" "$STATUS_PAYLOAD"
+
+     if [[ "$HISTORY_ENABLED" == "true" ]]; then
+       cluster_key=$(history_sanitize_key "$CLUSTER_ID")
+       data_key="history.${cluster_key}.jsonl"
+       entry=$(jq -n -c \
+         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+         --arg action "validate" \
+         --arg clusterId "$CLUSTER_ID" \
+         --arg initiator "$INITIATOR" \
+         --arg triggerNs "$CM_NAMESPACE" \
+         --arg triggerName "$CM_NAME" \
+         --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+         --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
+         '{ts:$ts, action:$action, clusterId:$clusterId, initiator:$initiator,
+           trigger:{namespace:$triggerNs, name:$triggerName},
+           result:{validation:"success", nginxPreflightWarningsCount:$nginxWarningsCount, nginxPreflightWarnings:$nginxWarnings}
+         }')
+       history_append_jsonl "$CM_NAMESPACE" "$HISTORY_CM" "$data_key" "$entry" "$HISTORY_MAX" || true
+     fi
   fi
 done

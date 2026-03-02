@@ -49,11 +49,51 @@ kind: Ingress
 metadata:
   name: demo-ingress
   namespace: ingress-migration-mock
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
 spec:
+  ingressClassName: nginx
   rules:
     - host: demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-app
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress-apisix
+  namespace: ingress-migration-mock
+spec:
+  ingressClassName: apisix
+  rules:
+    - host: demo-apisix.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-app
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress-kgateway
+  namespace: ingress-migration-mock
+spec:
+  # kgateway-dev is a Gateway API controller; for this e2e case we keep the Ingress
+  # provider as nginx and override the output gatewayClassName to "kgateway" via
+  # ingress-migration.flant.com/gateway-class.
+  ingressClassName: nginx
+  rules:
+    - host: demo-kgateway.local
       http:
         paths:
           - path: /
