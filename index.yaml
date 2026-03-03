@@ -1,0 +1,15 @@
+apiVersion: v1
+entries:
+  ingress-migration-shell-operator:
+  - apiVersion: v2
+    appVersion: 0.1.1
+    created: "2026-03-03T09:30:42.017636623Z"
+    description: Zero-code migration tool automating ingress2gateway conversions from
+      NGINX Ingress to Gateway API
+    digest: d02911515487592ef757fdd412affb6f6b7d725371863ac620d818e295ab498a
+    name: ingress-migration-shell-operator
+    type: application
+    urls:
+    - https://victorbecerragit.github.io/ingress-migration-shell-operator/ingress-migration-shell-operator-0.1.1.tgz
+    version: 0.1.1
+generated: "2026-03-03T09:30:42.016857778Z"
