@@ -26,7 +26,8 @@ jobs:
       pull-requests: write
     steps:
       - name: Add Copilot as reviewer
-        run: gh pr edit ${{ github.event.pull_request.number }} --add-reviewer copilot
+        continue-on-error: true
+        run: gh pr edit ${{ github.event.pull_request.number }} --add-reviewer copilot-pull-request-reviewer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
