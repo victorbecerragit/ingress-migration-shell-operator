@@ -22,7 +22,7 @@ migration is driven by an annotated ConfigMap trigger.
 
 - Kubernetes cluster with [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) installed
 - Helm v3
-- A Gateway API controller (e.g. `cloud-provider-kind`, `kgateway`, `kong-mesh`)
+- A supported Gateway API controller installed and running (e.g. [`kgateway`](https://kgateway.dev), [`kong`](https://docs.konghq.com/kubernetes-ingress-controller/), [`cloud-provider-kind`](https://github.com/kubernetes-sigs/cloud-provider-kind) for local Kind clusters)
 
 ## Install
 
