@@ -46,6 +46,8 @@ spec:
             name: {{ .Release.Name }}-ingress-migration-scripts
             defaultMode: 0644
             items:
+              - key: common.sh
+                path: common.sh
               - key: status.sh
                 path: status.sh
               - key: history.sh

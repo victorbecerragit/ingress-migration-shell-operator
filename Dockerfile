@@ -35,9 +35,10 @@ COPY scripts/ /hooks/
 # Copy library scripts to /usr/local/lib/hooks/ so shell-operator does not
 # discover them as hooks (it only scans /hooks/).
 RUN mkdir -p /usr/local/lib/hooks && \
-  cp /hooks/lib/status.sh /usr/local/lib/hooks/status.sh && \
-  cp /hooks/lib/history.sh /usr/local/lib/hooks/history.sh && \
-  cp /hooks/lib/provider.sh /usr/local/lib/hooks/provider.sh && \
+  cp /hooks/lib/common.sh        /usr/local/lib/hooks/common.sh        && \
+  cp /hooks/lib/status.sh        /usr/local/lib/hooks/status.sh        && \
+  cp /hooks/lib/history.sh       /usr/local/lib/hooks/history.sh       && \
+  cp /hooks/lib/provider.sh      /usr/local/lib/hooks/provider.sh      && \
   cp /hooks/lib/nginx_gotchas.sh /usr/local/lib/hooks/nginx_gotchas.sh && \
   chmod +x /hooks/migrate.sh /hooks/validate.sh /hooks/rollback.sh
 

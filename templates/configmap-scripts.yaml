@@ -9,6 +9,12 @@ data:
 {{ .Files.Get "scripts/validate.sh" | indent 4 }}
   rollback.sh: |-
 {{ .Files.Get "scripts/rollback.sh" | indent 4 }}
+  # common.sh is sourced at /hooks/lib/common.sh when /usr/local/lib/hooks/common.sh
+  # is not present (e.g. during local dev or test).  ConfigMap keys cannot contain
+  # '/', so the Helm chart also mounts this at a flat key; the hook.yaml volume mount
+  # maps it to the correct sub-path.
+  common.sh: |-
+{{ .Files.Get "scripts/lib/common.sh" | indent 4 }}
   # status.sh is sourced by all hooks at /hooks/status.sh.
   # ConfigMap keys cannot contain '/', so the lib/ prefix is dropped here.
   status.sh: |-
