@@ -177,12 +177,22 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
             echo "Converting cluster-wide"
         fi
 
-        # Execute ingress2gateway
-        OUT=$("$ingress2gateway_bin" "${args[@]}" 2>&1) || {
-            echo "Error running ingress2gateway: $OUT"
+        # Execute ingress2gateway.
+        # Capture stdout (YAML) and stderr (warnings) separately so that any
+        # informational/warning lines printed to stderr do NOT corrupt the YAML
+        # that is later piped to `kubectl apply -f -`.
+        local _i2g_err
+        _i2g_err=$(mktemp)
+        OUT=$("$ingress2gateway_bin" "${args[@]}" 2>"$_i2g_err") || {
+            echo "Error running ingress2gateway: $(cat "$_i2g_err")"
+            rm -f "$_i2g_err"
             ERROR_MSG="generation_failed"
             return 1
         }
+        if [[ -s "$_i2g_err" ]]; then
+            echo "ingress2gateway warnings: $(cat "$_i2g_err")"
+        fi
+        rm -f "$_i2g_err"
 
                 # Hash the generated manifests for history tracking
                 local out_hash
@@ -410,67 +420,83 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         APPLIED="true"
     fi
 
-    # Patch Status back on the trigger ConfigMap
+    # Compute manifest hash and normalise array fields.
+    # Done here (not inside the history block) so the report can include them too.
+    manifest_hash=""
+    if [[ -n "$MANIFEST_HASH_INPUT" ]]; then
+        manifest_hash=$(printf '%b' "$MANIFEST_HASH_INPUT" | history_sha256_stdin)
+    fi
+    ingress_sample_json=$(printf '%b' "$BEFORE_INGRESS_SAMPLE" | sed '/^\s*$/d' | head -n 20 | jq -R -s -c 'split("\n") | map(select(length>0))')
+    ns_list_json=$(printf '%s' "$NS_LIST" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
+
+    # Build the structured event record once — reused for the report, the status
+    # patch, and the history append.
+    entry=$(jq -n -c \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg action "migrate" \
+        --arg clusterId "$CLUSTER_ID" \
+        --arg initiator "$INITIATOR" \
+        --arg triggerNs "$CM_NAMESPACE" \
+        --arg triggerName "$CM_NAME" \
+        --arg providers "$PROVIDERS" \
+        --arg dryRun "$DRY_RUN" \
+        --arg nsSelector "$NS_SELECTOR" \
+        --arg migrateEndpoints "$MIGRATE_ENDPOINTS" \
+        --arg gatewayClass "$GATEWAY_CLASS" \
+        --arg convertedResources "$COUNT" \
+        --arg convertedGateways "$GW_COUNT" \
+        --arg migratedEndpoints "$ENDPOINT_COUNT" \
+        --arg applied "$APPLIED" \
+        --arg error "$ERROR_MSG" \
+        --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
+        --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
+        --arg manifestHash "$manifest_hash" \
+        --arg beforeIngressCount "$BEFORE_INGRESS_COUNT" \
+        --argjson beforeIngressSample "$ingress_sample_json" \
+        --argjson namespaces "$ns_list_json" \
+        '{ts:$ts, action:$action, clusterId:$clusterId, initiator:$initiator,
+            trigger:{namespace:$triggerNs, name:$triggerName},
+            config:{providers:$providers, dryRun:$dryRun, namespaceSelector:$nsSelector, migrateEndpoints:$migrateEndpoints, gatewayClass:$gatewayClass},
+            before:{ingressCount:$beforeIngressCount, ingressSample:$beforeIngressSample},
+            after:{httpRoutes:$convertedResources, gateways:$convertedGateways, endpointSlicesConverted:$migratedEndpoints, applied:$applied, error:$error, manifestHash:$manifestHash, nginxPreflightWarningsCount:$nginxWarningsCount, nginxPreflightWarnings:$nginxWarnings},
+            namespaces:$namespaces
+        }')
+
+    # Render the human-readable before/after report.
+    REPORT_TEXT=$(build_migration_report "$entry")
+
+    # Patch status (includes the formatted report) back onto the trigger ConfigMap.
     echo "Updating status in ConfigMap: $CM_NAME"
     STATUS_PAYLOAD=$(jq -n \
-      --arg count "$COUNT" \
-      --arg epcount "$ENDPOINT_COUNT" \
-      --arg applied "$APPLIED" \
-      --arg error "$ERROR_MSG" \
-            --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
-            --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
-      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{data: {convertedResources: $count, migratedEndpoints: $epcount, applied: $applied, error: $error, lastRun: $date, nginxPreflightWarningsCount: $nginxWarningsCount, nginxPreflightWarnings: $nginxWarnings}}')
-      
+      --arg count        "$COUNT" \
+      --arg gwcount      "$GW_COUNT" \
+      --arg epcount      "$ENDPOINT_COUNT" \
+      --arg applied      "$APPLIED" \
+      --arg error        "$ERROR_MSG" \
+      --arg warnings     "$NGINX_WARNINGS_COUNT" \
+      --arg warningstext "$NGINX_WARNINGS_TEXT" \
+      --arg date         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg report       "$REPORT_TEXT" \
+      '{data: {
+          convertedResources:          $count,
+          convertedGateways:           $gwcount,
+          migratedEndpoints:           $epcount,
+          applied:                     $applied,
+          error:                       $error,
+          lastRun:                     $date,
+          nginxPreflightWarningsCount: $warnings,
+          nginxPreflightWarnings:      $warningstext,
+          report:                      $report
+      }}')
+
     patch_status "$CM_NAME" "$CM_NAMESPACE" "$STATUS_PAYLOAD"
 
-        # Append history entry (best-effort)
-        if [[ "$HISTORY_ENABLED" == "true" ]]; then
-            cluster_key=$(history_sanitize_key "$CLUSTER_ID")
-            data_key="history.${cluster_key}.jsonl"
-
-            manifest_hash=""
-            if [[ -n "$MANIFEST_HASH_INPUT" ]]; then
-                manifest_hash=$(printf '%b' "$MANIFEST_HASH_INPUT" | history_sha256_stdin)
-            fi
-
-            # Normalize the ingress sample as a JSON array (bounded)
-            ingress_sample_json=$(printf '%b' "$BEFORE_INGRESS_SAMPLE" | sed '/^\s*$/d' | head -n 20 | jq -R -s -c 'split("\n") | map(select(length>0))')
-            ns_list_json=$(printf '%s' "$NS_LIST" | xargs -n1 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length>0))')
-
-            entry=$(jq -n -c \
-                --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                --arg action "migrate" \
-                --arg clusterId "$CLUSTER_ID" \
-                --arg initiator "$INITIATOR" \
-                --arg triggerNs "$CM_NAMESPACE" \
-                --arg triggerName "$CM_NAME" \
-                --arg providers "$PROVIDERS" \
-                --arg dryRun "$DRY_RUN" \
-                --arg nsSelector "$NS_SELECTOR" \
-                --arg migrateEndpoints "$MIGRATE_ENDPOINTS" \
-                --arg gatewayClass "$GATEWAY_CLASS" \
-                --arg convertedResources "$COUNT" \
-                --arg convertedGateways "$GW_COUNT" \
-                --arg migratedEndpoints "$ENDPOINT_COUNT" \
-                --arg applied "$APPLIED" \
-                --arg error "$ERROR_MSG" \
-                --arg nginxWarningsCount "$NGINX_WARNINGS_COUNT" \
-                --arg nginxWarnings "$NGINX_WARNINGS_TEXT" \
-                --arg manifestHash "$manifest_hash" \
-                --arg beforeIngressCount "$BEFORE_INGRESS_COUNT" \
-                --argjson beforeIngressSample "$ingress_sample_json" \
-                --argjson namespaces "$ns_list_json" \
-                '{ts:$ts, action:$action, clusterId:$clusterId, initiator:$initiator,
-                    trigger:{namespace:$triggerNs, name:$triggerName},
-                    config:{providers:$providers, dryRun:$dryRun, namespaceSelector:$nsSelector, migrateEndpoints:$migrateEndpoints, gatewayClass:$gatewayClass},
-                    before:{ingressCount:$beforeIngressCount, ingressSample:$beforeIngressSample},
-                    after:{httpRoutes:$convertedResources, gateways:$convertedGateways, endpointSlicesConverted:$migratedEndpoints, applied:$applied, error:$error, manifestHash:$manifestHash, nginxPreflightWarningsCount:$nginxWarningsCount, nginxPreflightWarnings:$nginxWarnings},
-                    namespaces:$namespaces
-                }')
-
-            history_append_jsonl "$CM_NAMESPACE" "$HISTORY_CM" "$data_key" "$entry" "$HISTORY_MAX" || true
-        fi
+    # Append history entry (best-effort).
+    if [[ "$HISTORY_ENABLED" == "true" ]]; then
+        cluster_key=$(history_sanitize_key "$CLUSTER_ID")
+        data_key="history.${cluster_key}.jsonl"
+        history_append_jsonl "$CM_NAMESPACE" "$HISTORY_CM" "$data_key" "$entry" "$HISTORY_MAX" || true
+    fi
     echo "Migration processing complete for $CM_NAME."
   fi
 done

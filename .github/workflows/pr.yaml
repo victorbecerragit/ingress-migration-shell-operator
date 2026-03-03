@@ -1,0 +1,33 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+jobs:
+  bats:
+    name: BATS Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: |
+          sudo apt-get install -y bats
+
+      - name: Run unit tests
+        run: bash tests/run-bats.sh
+
+  request-copilot-review:
+    name: Request Copilot Review
+    runs-on: ubuntu-latest
+    needs: bats
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Add Copilot as reviewer
+        continue-on-error: true
+        run: gh pr edit ${{ github.event.pull_request.number }} --add-reviewer copilot-pull-request-reviewer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

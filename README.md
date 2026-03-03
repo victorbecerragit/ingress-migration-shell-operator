@@ -1,174 +1,152 @@
-# 🚀 Ingress Migration Shell Operator
+# Ingress Migration Shell Operator
 
-**NGINX Ingress dies March 2026. Migrate to Gateway API in 5 minutes, zero Go required.**
+Kubernetes-native tool to convert Ingress resources to Gateway API (HTTPRoutes + Gateways)
+using [`ingress2gateway`](https://github.com/kubernetes-sigs/ingress2gateway) and
+[Shell Operator](https://github.com/flant/shell-operator). No Go, no controllers to write —
+migration is driven by an annotated ConfigMap trigger.
 
-`ingress-migration-shell-operator` is a Kubernetes-native, GitOps-ready, zero-code tool to automatically convert Ingress resources to Kubernetes Gateway API (via `ingress2gateway`). It harnesses the power of [Flant Shell Operator](https://github.com/flant/shell-operator) and `ingress2gateway` to execute dynamic migrations via declarative triggers.
+> **Why?** The [ingress-nginx controller is deprecated](https://kubernetes.github.io/ingress-nginx/) and the Kubernetes project recommends migrating to the Gateway API. This tool automates that migration.
 
-## ✨ Features
-* **Zero Downtime**: Generates and applies `HTTPRoute` resources side-by-side with your existing Ingresses.
-* **Declarative Trigger**: Uses a simple annotated `ConfigMap` trigger format. Ideal for ArgoCD/GitOps!
-* **Multi-Tenant Safe**: Filter migrations targeting namespace label selectors dynamically.
-* **Review & Apply Gates**: Built-in dry-run flag allows you to safely check the generation logic on the fly before applying resources to your cluster.
-* **Status Reporting**: The Shell Operator automatically patches back the converted resources count, success/error states directly into your trigger `ConfigMap`.
-* **Rollback & Validate**: Equipped with additional hooks to quickly delete applied routes or smoke-test logic.
+## Features
 
-## 📦 Quickstart
+- **Declarative trigger** — a single ConfigMap with annotations controls scope, provider, dry-run, and rollback. GitOps / ArgoCD friendly.
+- **Dry-run gate** — preview converted resources before applying anything to the cluster.
+- **Before/after report** — each run writes a human-readable report directly into the trigger ConfigMap.
+- **NGINX preflight warnings** — detects risky patterns (regex paths, rewrite-target, trailing-slash redirects) before conversion.
+- **Rollback hook** — removes applied HTTPRoutes on demand.
+- **Audit history** — append-only JSONL log of every run stored in a ConfigMap.
+- **Multi-provider** — `ingress-nginx`, `apisix`, `kong`, `kgateway` (gateway class override).
 
-### Prerequisites
-* Kubernetes Cluster (tested on `kind`)
-* Helm v3
-* `ingress2gateway` available in the operator image (tests auto-download it)
-* A Gateway API implementation/controller in your cluster (and any provider-specific CRDs if you enable a provider like `kong`)
 
-Notes:
-- `ingress-migration.flant.com/namespace-selector` is a **Namespace label selector** (e.g. `env=prod`). It scopes which namespaces are processed.
+## Prerequisites
 
-### Installation
+- Kubernetes cluster with [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) installed
+- Helm v3
+- A Gateway API controller (e.g. `cloud-provider-kind`, `kgateway`, `kong-mesh`)
 
-Install via Helm:
+## Install
 
 ```bash
-helm upgrade --install ingress-migrator ./ \
-  --namespace ingress-system \
-  --create-namespace \
-  --set replicaCount=1
+helm upgrade --install ingress-migration ./ \
+  --namespace ingress-migration-system \
+  --create-namespace
 ```
 
-### ⛵ Kind Test Drive
-1. Apply the demo NGINX resources in a simulated `prod` environment (this works on any cluster, including Kind):
-   ```bash
-   kubectl apply -f examples/kind-test.yaml
-   ```
+## Trigger a Migration
 
-2. Trigger the migration with `dry-run: "true"` to preview:
-   ```bash
-   kubectl apply -f examples/migration-prod.yaml
-   ```
-
-3. Check the results in the ConfigMap:
-   ```bash
-   kubectl get configmap migrate-ingress-prod -n demo-prod -o yaml
-   ```
-   *Look for the `convertedResources` and `applied` tracking annotations under data!*
-
-4. Apply for Real:
-   Change `ingress-migration.flant.com/dry-run: "false"` inside `examples/migration-prod.yaml` and re-apply:
-   ```bash
-   kubectl apply -f examples/migration-prod.yaml
-   ```
-
-## ↩️ Rollback (delete HTTPRoutes)
-
-Rollback is implemented as a separate hook that **deletes HTTPRoutes** (it does not delete Gateways). Create a rollback trigger ConfigMap:
+Create a ConfigMap with the `ingress-migration.flant.com/migrate` label:
 
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-   name: rollback-demo
-   namespace: demo-prod
-   labels:
-      ingress-migration.flant.com/rollback: "true"
-   annotations:
-      # Optional: scope rollback to namespaces matching these labels.
-      # This selector matches Namespace labels (not HTTPRoute labels).
-      ingress-migration.flant.com/namespace-selector: "env=prod"
-data:
-   note: "Rollback trigger — delete HTTPRoutes"
+  name: migrate-ingress-demo
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "ingress-nginx"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/dry-run: "true"        # change to "false" to apply
+    ingress-migration.flant.com/migrate-endpoints: "true"
+    ingress-migration.flant.com/cluster-id: "my-cluster"
+    ingress-migration.flant.com/initiator: "you@example.com"
 ```
-
-Apply it and watch HTTPRoutes get removed:
 
 ```bash
-kubectl apply -f /path/to/rollback-demo.yaml
-kubectl get httproute -A
+kubectl apply -f trigger.yaml
 ```
 
-## 🕰️ History Buffer (Who / What / When)
+## Read the Report
 
-Each hook run can append a compact JSON entry into a rolling JSONL buffer stored in a ConfigMap (in the same namespace as the trigger). This is best-effort and bounded (default: last 100 entries) so it should not add noisy retries.
-
-### Trigger annotations
-- `ingress-migration.flant.com/history-enabled`: `"true"|"false"` (default `"true"`)
-- `ingress-migration.flant.com/history-configmap`: name to store history (default `ingress-migration-history`)
-- `ingress-migration.flant.com/history-max-entries`: integer as string (default `"100"`)
-- `ingress-migration.flant.com/cluster-id`: stable cluster identifier (recommended; used to partition history per cluster)
-- `ingress-migration.flant.com/initiator`: who triggered this (e.g. email, team, CI job)
-
-### Read history
-If you set `cluster-id: "prod-us-east-1"`, entries are stored under the data key `history.prod-us-east-1.jsonl`:
+After the operator runs, a human-readable before/after report is written directly into the trigger ConfigMap:
 
 ```bash
-kubectl get configmap ingress-migration-history -n demo-prod -o json \
-   | jq -r '.data["history.prod-us-east-1.jsonl"]'
+kubectl get cm migrate-ingress-demo -n demo-prod \
+  -o go-template='{{index .data "report"}}'
 ```
 
-Each line is a JSON object (JSONL).
+Example output:
 
-## ✅ E2E Tests (Mock Cluster)
+```
+=== Ingress -> Gateway API Migration Report ===
 
-This repo includes an end-to-end test that:
-- Applies a mock namespace + Service + Ingress
-- Runs `scripts/migrate.sh` using a synthetic Shell-Operator binding context
-- Asserts the trigger ConfigMap is patched with `convertedResources >= 1`, `error=none`, and `applied=false` (dry-run)
+  Timestamp : 2026-03-03T07:58:23Z
+  Trigger   : demo-prod/migrate-ingress-demo
+  Mode      : DRY RUN  (no resources changed)
+  Initiator : you@example.com
 
-### Prereqs
-- `kubectl` and `jq` on your PATH
-- A working cluster in your current kubeconfig, OR use Kind
+--- Configuration ---
+  Provider      : ingress-nginx
+  NS Selector   : env=prod
+  Gateway Class : (default)
+  Endpoints     : enabled
 
-Notes:
-- If `ingress2gateway` is not installed, the test runner auto-downloads the pinned version into `tests/.bin/`.
-- The mock E2E trigger uses `providers=ingress-nginx` so it can run on a plain cluster without Kong CRDs installed.
+--- Before ---
+  Ingresses : 9
+    demo-prod/ingress.networking.k8s.io/demo-ingress
+    ingress-migration-mock/ingress.networking.k8s.io/app-rewrite
+    ...
 
-Tip: Regex-style paths are intentionally avoided in E2E fixtures
-- Many real Ingress-NGINX regex examples use `pathType: ImplementationSpecific` (and/or regex-like path strings).
-- `ingress2gateway`'s generic translation does **not** support `ImplementationSpecific` pathType, so those manifests can fail conversion.
-- Also, `ingress-nginx`'s validating webhook can reject regex-like paths when `pathType: Prefix`.
-- For portable tests, the fixtures use plain `Prefix` paths but keep annotations like `use-regex` and `rewrite-target` so the preflight scanner still warns about the risky behavior.
+--- After ---
+  HTTPRoutes     : 6
+  Gateways       : 2
+  EndpointSlices : 2
+  Applied        : no
+  Error          : none
+  Manifest SHA   : 0d728c345cfd0980...
 
-### Run against your current cluster
+--- NGINX Preflight Warnings (14) ---
+  [NGINX_TRAILING_SLASH_REDIRECT] host=foo.bar.com ...
+  [NGINX_REWRITE_TARGET_IMPLIES_REGEX] host=rewrite.bar.com ...
+  ... and 12 more
+
+--- Namespaces ---
+  demo-prod
+```
+
+The flat status keys (`convertedResources`, `convertedGateways`, `migratedEndpoints`, `applied`, `error`, `lastRun`, `nginxPreflightWarningsCount`) remain available for programmatic use.
+
+## Rollback
+
+Delete applied HTTPRoutes by creating a ConfigMap with the `ingress-migration.flant.com/rollback` label:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollback-demo
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/rollback: "true"
+  annotations:
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+```
+
+## Audit History
+
+Each run appends a compact JSON record to a JSONL buffer in a ConfigMap (default `ingress-migration-history`, bounded to 100 entries). Read it with:
+
 ```bash
-bash ./tests/run-e2e.sh
+kubectl get cm ingress-migration-history -n demo-prod \
+  -o json | jq -r '.data["history.my-cluster.jsonl"]'
 ```
 
-### Manual hook run (synthetic binding context)
-If you want to reproduce the hook execution without remembering Fish vs Bash syntax:
-```bash
-bash ./tests/run-manual.sh
-```
+## Trigger Annotation Reference
 
-### Run with a temporary Kind cluster
-```bash
-E2E_KIND=1 bash ./tests/run-e2e.sh
-```
+| Annotation | Default | Description |
+|---|---|---|
+| `ingress-migration.flant.com/providers` | — | Comma-separated providers: `ingress-nginx`, `apisix`, `kong` |
+| `ingress-migration.flant.com/namespace-selector` | (all) | Namespace label selector to scope migration |
+| `ingress-migration.flant.com/dry-run` | `"true"` | Set to `"false"` to apply resources |
+| `ingress-migration.flant.com/gateway-class` | (provider default) | Override `gatewayClassName` in output |
+| `ingress-migration.flant.com/migrate-endpoints` | `"false"` | Also migrate EndpointSlices |
+| `ingress-migration.flant.com/cluster-id` | — | Stable ID used to partition history per cluster |
+| `ingress-migration.flant.com/initiator` | — | Free-text label stored in history (user, team, CI job) |
+| `ingress-migration.flant.com/history-enabled` | `"true"` | Disable history writes per trigger |
+| `ingress-migration.flant.com/history-configmap` | `ingress-migration-history` | Name of the history ConfigMap |
+| `ingress-migration.flant.com/history-max-entries` | `"100"` | Rolling window size for history |
 
-### Run APISIX provider E2E (Kind)
+## Testing & Development
 
-This validates provider dispatch + conversion for the `apisix` provider. When you run it on Kind, the test runner will also install Apache APISIX + the APISIX Ingress Controller (IngressClass `apisix`) into the Kind cluster.
-
-```bash
-E2E_KIND=1 \
-   E2E_TRIGGER_MANIFEST=trigger-apisix-dryrun.yaml \
-   bash ./tests/run-e2e.sh
-```
-
-Notes:
-- Auto-install is only enabled by default when `E2E_KIND=1` (so it won't modify a shared cluster unexpectedly).
-- To force install on your current kubecontext cluster, set `E2E_INSTALL_APISIX=1`.
-
-### Run kgateway-dev controller E2E (Kind)
-
-This validates the “kgateway-dev controller” path. The test runner will install `kgateway-dev/kgateway` into the Kind cluster, run `ingress2gateway` with a supported provider (`ingress-nginx`), and override the output `gatewayClassName` via `ingress-migration.flant.com/gateway-class: "kgateway"`.
-
-```bash
-E2E_KIND=1 \
-   E2E_TRIGGER_MANIFEST=trigger-kgateway-dryrun.yaml \
-   bash ./tests/run-e2e.sh
-```
-
-Notes:
-- Auto-install is only enabled by default when `E2E_KIND=1` (so it won't modify a shared cluster unexpectedly).
-- To force install on your current kubecontext cluster, set `E2E_INSTALL_KGATEWAY=1`.
-
-### 🧠 How does it work?
-The tool intercepts `ConfigMap` Create/Update events annotated with `ingress-migration.flant.com/*` using Flant Shell operator events and safely processes them using inline Bash executing `ingress2gateway`. No massive Go builds, purely composable binaries!
+See [docs/testing.md](docs/testing.md) for unit tests, E2E tests, provider-specific test suites, and guidance on adding or modifying test fixtures.
