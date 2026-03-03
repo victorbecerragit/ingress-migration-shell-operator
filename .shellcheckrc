@@ -1,0 +1,3 @@
+# Allow ShellCheck to follow sourced files specified via
+# "# shellcheck source=..." directives at the call site.
+external-sources=true

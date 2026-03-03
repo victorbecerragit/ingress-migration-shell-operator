@@ -19,8 +19,6 @@ jobs:
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: './scripts'
-          additional_files: 'scripts/lib/common.sh scripts/lib/status.sh scripts/lib/history.sh scripts/lib/provider.sh scripts/lib/nginx_gotchas.sh'
-          external_sources: true
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
