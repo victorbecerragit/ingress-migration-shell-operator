@@ -21,7 +21,6 @@ jobs:
   request-copilot-review:
     name: Request Copilot Review
     runs-on: ubuntu-latest
-    if: github.event.action == 'opened'
     needs: bats
     steps:
       - name: Add Copilot as reviewer
