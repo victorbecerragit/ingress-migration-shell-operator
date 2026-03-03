@@ -26,7 +26,41 @@ migration is driven by an annotated ConfigMap trigger.
 
 ## Install
 
+### Using Helm (Recommended)
+
+Add the repository and install:
+
 ```bash
+helm repo add ingress-migration https://victorbecerragit.github.io/ingress-migration-shell-operator
+helm repo update
+helm install ingress-migration ingress-migration/ingress-migration-shell-operator \
+  --namespace ingress-migration-system \
+  --create-namespace
+```
+
+Preview rendered manifests before installing:
+
+```bash
+helm upgrade --install ingress-migration ingress-migration/ingress-migration-shell-operator \
+  --namespace ingress-migration-system \
+  --create-namespace \
+  --dry-run
+```
+
+Pin to a specific version:
+
+```bash
+helm install ingress-migration ingress-migration/ingress-migration-shell-operator \
+  --namespace ingress-migration-system \
+  --create-namespace \
+  --version 0.3.0
+```
+
+### Development / Local Install
+
+```bash
+git clone https://github.com/victorbecerragit/ingress-migration-shell-operator.git
+cd ingress-migration-shell-operator
 helm upgrade --install ingress-migration ./ \
   --namespace ingress-migration-system \
   --create-namespace
