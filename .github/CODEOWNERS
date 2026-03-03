@@ -1,0 +1,8 @@
+# CODEOWNERS
+#
+# Each line assigns ownership for a path pattern.
+# Owners are automatically requested for review when a PR touches matching files.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# GitHub Copilot reviews every change in the repository
+* @copilot-pull-request-reviewer
