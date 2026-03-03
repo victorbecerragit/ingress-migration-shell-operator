@@ -1,5 +1,11 @@
 # Ingress Migration Shell Operator
 
+[![CI](https://img.shields.io/github/actions/workflow/status/victorbecerragit/ingress-migration-shell-operator/ci.yaml?branch=main&logo=github&label=CI)](https://github.com/victorbecerragit/ingress-migration-shell-operator/actions/workflows/ci.yaml)
+[![Release](https://img.shields.io/github/release/victorbecerragit/ingress-migration-shell-operator.svg)](https://github.com/victorbecerragit/ingress-migration-shell-operator/releases)
+[![Helm Chart](https://img.shields.io/badge/helm--chart-v0.3.0-blue?logo=helm)](https://github.com/victorbecerragit/ingress-migration-shell-operator/releases)
+[![Shell Operator](https://img.shields.io/badge/shell--operator-v1.4.16-informational?logo=linux)](https://github.com/flant/shell-operator)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 Kubernetes-native tool to convert Ingress resources to Gateway API (HTTPRoutes + Gateways)
 using [`ingress2gateway`](https://github.com/kubernetes-sigs/ingress2gateway) and
 [Shell Operator](https://github.com/flant/shell-operator). No Go, no controllers to write —
