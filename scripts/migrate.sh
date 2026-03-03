@@ -468,14 +468,15 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
     # Patch status (includes the formatted report) back onto the trigger ConfigMap.
     echo "Updating status in ConfigMap: $CM_NAME"
     STATUS_PAYLOAD=$(jq -n \
-      --arg count    "$COUNT" \
-      --arg gwcount  "$GW_COUNT" \
-      --arg epcount  "$ENDPOINT_COUNT" \
-      --arg applied  "$APPLIED" \
-      --arg error    "$ERROR_MSG" \
-      --arg warnings "$NGINX_WARNINGS_COUNT" \
-      --arg date     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      --arg report   "$REPORT_TEXT" \
+      --arg count        "$COUNT" \
+      --arg gwcount      "$GW_COUNT" \
+      --arg epcount      "$ENDPOINT_COUNT" \
+      --arg applied      "$APPLIED" \
+      --arg error        "$ERROR_MSG" \
+      --arg warnings     "$NGINX_WARNINGS_COUNT" \
+      --arg warningstext "$NGINX_WARNINGS_TEXT" \
+      --arg date         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg report       "$REPORT_TEXT" \
       '{data: {
           convertedResources:          $count,
           convertedGateways:           $gwcount,
@@ -484,6 +485,7 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
           error:                       $error,
           lastRun:                     $date,
           nginxPreflightWarningsCount: $warnings,
+          nginxPreflightWarnings:      $warningstext,
           report:                      $report
       }}')
 

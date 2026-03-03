@@ -58,6 +58,9 @@ history_put_jsonl() {
   # do not hit the OS "Argument list too long" limit that --from-literal hits.
   local _tmp_dir _tmp_file
   _tmp_dir=$(mktemp -d)
+  # Ensure cleanup even if the pipeline fails (e.g. cluster unreachable).
+  # shellcheck disable=SC2064
+  trap "rm -rf '$_tmp_dir'" RETURN
   _tmp_file="$_tmp_dir/$data_key"
   printf '%s' "$content" > "$_tmp_file"
 
@@ -67,8 +70,6 @@ history_put_jsonl() {
     --dry-run=client \
     -o yaml \
     | kubectl apply -f - >/dev/null
-
-  rm -rf "$_tmp_dir"
 }
 
 history_append_jsonl() {

@@ -43,7 +43,7 @@ metadata:
   name: migrate-ingress-demo
   namespace: demo-prod
   labels:
-    ingress-migration.flant.com/migrate: "true"
+    ingress-migration.flant.com/trigger: "true"
   annotations:
     ingress-migration.flant.com/providers: "ingress-nginx"
     ingress-migration.flant.com/namespace-selector: "env=prod"
