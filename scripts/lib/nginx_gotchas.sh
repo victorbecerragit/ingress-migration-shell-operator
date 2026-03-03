@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-
-set -euo pipefail
-
 # nginx_gotchas.sh
 #
 # Lightweight preflight warnings for common Ingress-NGINX behavioral gotchas
 # that can bite during migration to Gateway API implementations.
+#
+# Do NOT set shell options here; this file is sourced by hook scripts.
 #
 # Input: a Kubernetes IngressList JSON on stdin.
 # Output: a JSON array of warning objects on stdout.

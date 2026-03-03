@@ -2,5 +2,5 @@ apiVersion: v2
 name: ingress-migration-shell-operator
 description: Zero-code migration tool automating ingress2gateway conversions from NGINX Ingress to Gateway API
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.3.0
+appVersion: "0.3.0"

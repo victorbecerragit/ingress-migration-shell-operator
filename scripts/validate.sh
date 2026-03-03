@@ -4,34 +4,17 @@
 
 set -euo pipefail
 
-# Shared libraries.
-# shellcheck source=/dev/null
-if [[ -f /usr/local/lib/hooks/status.sh ]]; then
-  source /usr/local/lib/hooks/status.sh
+# Shared libraries — bootstrapped via common.sh.
+# shellcheck source=scripts/lib/common.sh
+if [[ -f /usr/local/lib/hooks/common.sh ]]; then
+  source /usr/local/lib/hooks/common.sh
 else
-  source "$(dirname "$0")/lib/status.sh"
+  source "$(dirname "$0")/lib/common.sh"
 fi
-
-# shellcheck source=/dev/null
-if [[ -f /usr/local/lib/hooks/history.sh ]]; then
-  source /usr/local/lib/hooks/history.sh
-else
-  source "$(dirname "$0")/lib/history.sh"
-fi
-
-# shellcheck source=/dev/null
-if [[ -f /usr/local/lib/hooks/provider.sh ]]; then
-  source /usr/local/lib/hooks/provider.sh
-else
-  source "$(dirname "$0")/lib/provider.sh"
-fi
-
-# shellcheck source=/dev/null
-if [[ -f /usr/local/lib/hooks/nginx_gotchas.sh ]]; then
-  source /usr/local/lib/hooks/nginx_gotchas.sh
-else
-  source "$(dirname "$0")/lib/nginx_gotchas.sh"
-fi
+source_lib status.sh
+source_lib history.sh
+source_lib provider.sh
+source_lib nginx_gotchas.sh
 
 if [[ ${1:-} == "--config" ]] ; then
   cat <<EOF
@@ -72,16 +55,8 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
      HISTORY_CM=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-configmap"] // "ingress-migration-history"')
      HISTORY_MAX=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/history-max-entries"] // "100"')
      INITIATOR=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/initiator"] // ""')
-     CLUSTER_ID=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/cluster-id"] // ""')
-     if [[ -z "$CLUSTER_ID" ]]; then
-       CLUSTER_ID="${KUBERNETES_SERVICE_HOST:-}"
-     fi
-     if [[ -z "$CLUSTER_ID" ]]; then
-       CLUSTER_ID=$(kubectl config current-context 2>/dev/null || true)
-     fi
-     if [[ -z "$CLUSTER_ID" ]]; then
-       CLUSTER_ID="unknown"
-     fi
+     _cluster_id_annotation=$(echo "$event" | jq -r '.object.metadata.annotations["ingress-migration.flant.com/cluster-id"] // ""')
+     CLUSTER_ID=$(resolve_cluster_id "$_cluster_id_annotation")
      
      NGINX_WARNINGS_COUNT="0"
      NGINX_WARNINGS_TEXT=""
