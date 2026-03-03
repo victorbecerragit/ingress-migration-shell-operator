@@ -21,6 +21,9 @@ Test files are under `tests/bats/`. They cover:
   regex prefix case-insensitive, namespace allowlist filtering)
 - `providers.bats` — provider dispatch: `ingress-nginx`, `apisix` / `apisix-ingress`,
   `kong` / `kong-ingress`, unknown provider rejection
+  (also asserts that invalid aliases `kong-gw`, `kong-gateway`, `Kong` are rejected)
+- `status.bats` — `build_migration_report()` output: header, DRY/LIVE run label,
+  namespace list, NGINX warnings section
 
 ---
 
@@ -81,6 +84,52 @@ E2E_KIND=1 \
 
 Set `E2E_INSTALL_KGATEWAY=1` to force installation on an existing cluster.
 
+### Kong provider (`kong`)
+
+Validates provider dispatch and conversion for the `kong` provider using the
+[Kong Ingress Controller](https://docs.konghq.com/kubernetes-ingress-controller/).
+When `E2E_KIND=1` the test runner installs `kong/ingress` via Helm automatically.
+`ingress2gateway` requires Kong's CRDs (`TCPIngress`, etc.) to be present in the
+cluster — without them the conversion fails. Running with `E2E_INSTALL_KONG=1`
+(or `E2E_KIND=1`) ensures the CRDs are available before the hook executes.
+
+The `tests/manifests/mock-cluster.yaml` fixture includes a `demo-ingress-kong`
+Ingress (`ingressClassName: kong`) so `ingress2gateway --providers=kong` always
+finds at least one resource to convert.
+
+```bash
+# Existing cluster — install Kong then run
+E2E_INSTALL_KONG=1 \
+  E2E_TRIGGER_MANIFEST=trigger-kong-dryrun.yaml \
+  bash tests/run-e2e.sh
+
+# Temporary Kind cluster (installs Kong automatically)
+E2E_KIND=1 \
+  E2E_TRIGGER_MANIFEST=trigger-kong-dryrun.yaml \
+  bash tests/run-e2e.sh
+```
+
+Expected output on success:
+
+```
+Kong is ready (namespace=kong, release=kong)
+...
+PASS: convertedResources=1 applied=false error=none
+Used trigger manifest: trigger-kong-dryrun.yaml
+```
+
+Set `E2E_INSTALL_KONG=0` to skip controller installation (CRDs must already exist).
+
+**Environment variables**
+
+| Variable | Default | Description |
+|---|---|---|
+| `E2E_INSTALL_KONG` | `auto` | `auto` installs when `E2E_KIND=1`; `1` forces install; `0` skips |
+| `E2E_KONG_NAMESPACE` | `kong` | Namespace for the Kong release |
+| `E2E_KONG_RELEASE` | `kong` | Helm release name |
+| `E2E_KONG_CHART_VERSION` | `0.4.0` | `kong/ingress` chart version |
+| `E2E_KONG_WAIT_TIMEOUT` | `300s` | Rollout wait timeout |
+
 ---
 
 ## Manual Hook Run
@@ -101,7 +150,9 @@ bash tests/run-manual.sh
 | NGINX preflight logic | `scripts/lib/nginx_gotchas.sh` → `tests/bats/nginx_gotchas.bats` |
 | Provider dispatch | `scripts/lib/provider.sh` → `tests/bats/providers.bats` |
 | E2E Ingress fixtures | `tests/manifests/nginx/` (one YAML per scenario) |
+| Kong / APISIX fixtures | `tests/manifests/mock-cluster.yaml` (`demo-ingress-kong`, `demo-ingress-apisix`) |
 | Trigger ConfigMap fixtures | `tests/manifests/trigger-*.yaml` |
+| Controller install scripts | `tests/lib/install-{apisix,kgateway,kong}.sh` |
 | E2E assertions | `tests/run-e2e.sh` (bottom of file, `assert_*` calls) |
 
 Run `bash tests/run-bats.sh` after every change to the library scripts; it

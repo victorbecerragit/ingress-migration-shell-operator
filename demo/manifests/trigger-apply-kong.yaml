@@ -1,0 +1,27 @@
+# demo/manifests/trigger-apply-kong.yaml
+# Live-apply trigger: migrates nginx Ingresses to Gateway API resources
+# using the Kong GatewayClass installed by the Kong Ingress Controller.
+#
+# Usage:
+#   kubectl apply -f demo/manifests/trigger-apply-kong.yaml
+#
+# Prerequisites:
+#   - Kong Ingress Controller installed (helm install kong kong/ingress -n kong)
+#   - Gateway API CRDs installed
+#   - demo-prod namespace labeled env=prod
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-demo-kong
+  namespace: demo-prod
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "ingress-nginx"
+    ingress-migration.flant.com/dry-run: "false"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+    ingress-migration.flant.com/gateway-class: "kong"
+data:
+  note: "Trigger ConfigMap — live apply targeting Kong GatewayClass."
