@@ -94,10 +94,23 @@ jobs:
           mkdir -p .cr-release-packages
           helm package . --destination .cr-release-packages/
 
+      - name: Check if chart release tag already exists
+        id: tag-check
+        run: |
+          VERSION=$(helm show chart .cr-release-packages/*.tgz | awk '/^version:/{print $2}')
+          TAG="ingress-migration-shell-operator-${VERSION}"
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already exists — skipping chart-releaser"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} not found — will publish"
+          fi
+
       - name: Run chart-releaser
+        if: steps.tag-check.outputs.exists == 'false'
         uses: helm/chart-releaser-action@v1.6.0
         with:
           skip_packaging: true
-          skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
