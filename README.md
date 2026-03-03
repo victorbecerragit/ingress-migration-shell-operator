@@ -89,6 +89,12 @@ metadata:
 
 ```bash
 kubectl apply -f trigger.yaml
+
+Or use the manifest directly from /demo/manifests/ to create the app/ingress to migrate from:
+kubectl apply -f demo/manifests/app.yaml
+kubectl apply -f demo/manifests/ingress.yaml
+kubectl apply -f demo/manifests/trigger-apply.yaml
+
 ```
 
 ## Read the Report
