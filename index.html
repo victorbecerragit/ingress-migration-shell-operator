@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ingress-migration-shell-operator — Helm Chart</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #24292f; }
+    h1   { font-size: 1.6rem; }
+    pre  { background: #f6f8fa; border-radius: 6px; padding: 16px; overflow-x: auto; }
+    code { font-size: 0.9rem; }
+    a    { color: #0969da; }
+  </style>
+</head>
+<body>
+  <h1>🔄 ingress-migration-shell-operator</h1>
+  <p>Helm chart repository for the <a href="https://github.com/victorbecerragit/ingress-migration-shell-operator">ingress-migration-shell-operator</a> — a zero-code tool that automates <strong>Ingress → Gateway API</strong> migrations using <code>ingress2gateway</code>.</p>
+
+  <h2>Add this Helm repo</h2>
+  <pre><code>helm repo add ingress-migration https://victorbecerragit.github.io/ingress-migration-shell-operator
+helm repo update</code></pre>
+
+  <h2>Install</h2>
+  <pre><code>helm install ingress-migration ingress-migration/ingress-migration-shell-operator</code></pre>
+
+  <h2>Links</h2>
+  <ul>
+    <li><a href="https://github.com/victorbecerragit/ingress-migration-shell-operator">GitHub Repository</a></li>
+    <li><a href="https://github.com/victorbecerragit/ingress-migration-shell-operator/blob/main/README.md">Documentation</a></li>
+  </ul>
+
+  <hr/>
+  <small>Chart packages and <code>index.yaml</code> are published here automatically by the CI pipeline on every release tag.</small>
+</body>
+</html>
