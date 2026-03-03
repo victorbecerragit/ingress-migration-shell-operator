@@ -39,3 +39,76 @@ patch_status() {
   # Return 0: a status-patch failure should not abort the migration itself.
   return 0
 }
+
+# --------------------------------------------------------------------------
+# build_migration_report <entry_json>
+#
+# Renders a human-readable before/after migration report from the structured
+# event JSON produced by migrate.sh.  Prints the formatted text to stdout.
+#
+# The caller stores the output as the `report` key in the trigger ConfigMap
+# so operators can read it with:
+#   kubectl get cm <trigger-name> -o jsonpath='{.data.report}'
+# or view it as a single block with:
+#   kubectl get cm <trigger-name> -o go-template='{{index .data "report"}}'
+# --------------------------------------------------------------------------
+build_migration_report() {
+    local entry_json="${1:?entry_json required}"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "(report unavailable: jq not found)"
+        return 0
+    fi
+
+    jq -r '
+        def yn: if . == "true" then "yes" else "no" end;
+        def na: if (. // "") == "" then "(none)" else . end;
+
+        "=== Ingress -> Gateway API Migration Report ===",
+        "",
+        "  Timestamp : " + .ts,
+        "  Trigger   : " + .trigger.namespace + "/" + .trigger.name,
+        "  Mode      : " + (if .config.dryRun == "false" then "LIVE RUN" else "DRY RUN  (no resources changed)" end),
+        "  Initiator : " + (.initiator | na),
+        "",
+        "--- Configuration ---",
+        "  Provider      : " + .config.providers,
+        "  NS Selector   : " + (.config.namespaceSelector | na),
+        "  Gateway Class : " + (if (.config.gatewayClass // "") == "" then "(default)" else .config.gatewayClass end),
+        "  Endpoints     : " + (if .config.migrateEndpoints == "true" then "enabled" else "disabled" end),
+        "",
+        "--- Before ---",
+        "  Ingresses : " + .before.ingressCount,
+        (if (.before.ingressSample | length) > 0 then
+            (.before.ingressSample[] | "    " + .)
+        else empty end),
+        "",
+        "--- After ---",
+        "  HTTPRoutes     : " + .after.httpRoutes,
+        "  Gateways       : " + .after.gateways,
+        "  EndpointSlices : " + .after.endpointSlicesConverted,
+        "  Applied        : " + (.after.applied | yn),
+        "  Error          : " + .after.error,
+        (if (.after.manifestHash // "") != "" then
+            "  Manifest SHA   : " + .after.manifestHash[:16] + "..."
+        else empty end),
+        (if ((.after.nginxPreflightWarningsCount // "0") | tonumber) > 0 then
+            "",
+            "--- NGINX Preflight Warnings (" + .after.nginxPreflightWarningsCount + ") ---",
+            ((.after.nginxPreflightWarnings
+                | split("\n")
+                | map(select(length > 0))) as $w |
+                ($w[0:10][] | "  " + .),
+                if ($w | length) > 10 then
+                    "  ... and " + (($w | length) - 10 | tostring) + " more"
+                else empty end)
+        else empty end),
+        "",
+        "--- Namespaces ---",
+        (if (.namespaces | length) > 0 then
+            (.namespaces[] | "  " + .)
+        else
+            "  (all)"
+        end)
+    ' <<< "$entry_json"
+}
