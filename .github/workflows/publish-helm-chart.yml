@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 jobs:
   validate:
@@ -46,57 +45,10 @@ jobs:
           echo "Generated manifests:"
           head -60 /tmp/manifests.yaml
 
-  request-approval:
-    name: Request Approval for Publication
-    runs-on: ubuntu-latest
-    needs: validate
-
-    steps:
-      - name: Create approval issue
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const chartVersion = '${{ needs.validate.outputs.chart-version }}';
-            const appVersion   = '${{ needs.validate.outputs.app-version }}';
-            const tagRef       = '${{ github.ref_name }}';
-
-            const issueBody =
-              '## 🚀 Helm Chart Release Request\n\n' +
-              'A new release has been validated and is ready to publish.\n\n' +
-              '### Chart Metadata\n' +
-              '- **Chart Version:** `' + chartVersion + '`\n' +
-              '- **App Version:**   `' + appVersion   + '`\n' +
-              '- **Git Tag:**       `' + tagRef       + '`\n\n' +
-              '### What will happen when published\n' +
-              '- Helm chart packaged and pushed to the `gh-pages` branch\n' +
-              '- GitHub Release created with install instructions\n' +
-              '- `index.yaml` updated so users can `helm repo update`\n\n' +
-              '### Validation Status\n' +
-              '✅ `helm lint` passed\n' +
-              '✅ `helm template` rendered successfully\n\n' +
-              '### Install after publish\n' +
-              '```bash\n' +
-              'helm repo add ingress-migration https://victorbecerragit.github.io/ingress-migration-shell-operator\n' +
-              'helm install ingress-migration ingress-migration/ingress-migration-shell-operator\n' +
-              '```\n\n' +
-              '---\n' +
-              '> This issue was created automatically by the **Publish Helm Chart** workflow.\n' +
-              '> The `publish` job will run automatically after validation — close this issue once the release is confirmed.';
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              title: '📦 Helm Chart Release v' + chartVersion + ' — ' + tagRef,
-              body:  issueBody,
-              labels: ['release']
-            });
-
   publish:
     name: Publish Helm Chart to gh-pages
     runs-on: ubuntu-latest
     needs: validate
-    # Remove the line below to auto-publish on every tag push without manual gate
-    if: true
     permissions:
       contents: write
 
