@@ -54,12 +54,21 @@ history_put_jsonl() {
   local data_key="${3:?data key required}"
   local content="${4:-}"
 
+  # Write content to a temp file and use --from-file so that large histories
+  # do not hit the OS "Argument list too long" limit that --from-literal hits.
+  local _tmp_dir _tmp_file
+  _tmp_dir=$(mktemp -d)
+  _tmp_file="$_tmp_dir/$data_key"
+  printf '%s' "$content" > "$_tmp_file"
+
   kubectl create configmap "$cm_name" \
     -n "$ns" \
-    --from-literal="$data_key=$content" \
+    --from-file="$data_key=$_tmp_file" \
     --dry-run=client \
     -o yaml \
     | kubectl apply -f - >/dev/null
+
+  rm -rf "$_tmp_dir"
 }
 
 history_append_jsonl() {

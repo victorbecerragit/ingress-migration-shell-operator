@@ -177,12 +177,22 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
             echo "Converting cluster-wide"
         fi
 
-        # Execute ingress2gateway
-        OUT=$("$ingress2gateway_bin" "${args[@]}" 2>&1) || {
-            echo "Error running ingress2gateway: $OUT"
+        # Execute ingress2gateway.
+        # Capture stdout (YAML) and stderr (warnings) separately so that any
+        # informational/warning lines printed to stderr do NOT corrupt the YAML
+        # that is later piped to `kubectl apply -f -`.
+        local _i2g_err
+        _i2g_err=$(mktemp)
+        OUT=$("$ingress2gateway_bin" "${args[@]}" 2>"$_i2g_err") || {
+            echo "Error running ingress2gateway: $(cat "$_i2g_err")"
+            rm -f "$_i2g_err"
             ERROR_MSG="generation_failed"
             return 1
         }
+        if [[ -s "$_i2g_err" ]]; then
+            echo "ingress2gateway warnings: $(cat "$_i2g_err")"
+        fi
+        rm -f "$_i2g_err"
 
                 # Hash the generated manifests for history tracking
                 local out_hash
