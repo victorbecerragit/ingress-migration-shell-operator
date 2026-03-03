@@ -14,6 +14,7 @@ CM_NAME=${E2E_CM_NAME:-migrate-ingress-mock}
 TRIGGER_MANIFEST=${E2E_TRIGGER_MANIFEST:-trigger-dryrun.yaml}
 E2E_INSTALL_APISIX=${E2E_INSTALL_APISIX:-auto}
 E2E_INSTALL_KGATEWAY=${E2E_INSTALL_KGATEWAY:-auto}
+E2E_INSTALL_KONG=${E2E_INSTALL_KONG:-auto}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -141,6 +142,29 @@ if [[ "$TRIGGER_MANIFEST" == *"kgateway"* ]]; then
       ;;
     *)
       die "Invalid E2E_INSTALL_KGATEWAY value: '$E2E_INSTALL_KGATEWAY' (use auto|1|0)"
+      ;;
+  esac
+fi
+
+if [[ "$TRIGGER_MANIFEST" == *"kong"* ]]; then
+  case "$E2E_INSTALL_KONG" in
+    1|true|yes)
+      echo "Installing Kong Ingress Controller (forced via E2E_INSTALL_KONG=$E2E_INSTALL_KONG)"
+      bash "$ROOT_DIR/tests/lib/install-kong.sh"
+      ;;
+    auto)
+      if [[ "$USE_KIND" == "1" ]]; then
+        echo "Installing Kong Ingress Controller (auto; Kind E2E + kong trigger)"
+        bash "$ROOT_DIR/tests/lib/install-kong.sh"
+      else
+        echo "Skipping Kong install (E2E_KIND!=1). Set E2E_INSTALL_KONG=1 to install on the current cluster."
+      fi
+      ;;
+    0|false|no)
+      echo "Skipping Kong install (E2E_INSTALL_KONG=$E2E_INSTALL_KONG)"
+      ;;
+    *)
+      die "Invalid E2E_INSTALL_KONG value: '$E2E_INSTALL_KONG' (use auto|1|0)"
       ;;
   esac
 fi

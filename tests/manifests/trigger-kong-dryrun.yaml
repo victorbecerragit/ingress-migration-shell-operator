@@ -1,0 +1,20 @@
+# Trigger ConfigMap used by e2e tests (Kong provider).
+# This validates that the hook dispatches to ingress2gateway provider "kong".
+#
+# Usage:
+#   TRIGGER_MANIFEST=trigger-kong-dryrun.yaml ./tests/run-e2e.sh
+#   E2E_KIND=1 TRIGGER_MANIFEST=trigger-kong-dryrun.yaml ./tests/run-e2e.sh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-mock
+  namespace: ingress-migration-mock
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "kong"
+    ingress-migration.flant.com/dry-run: "true"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+data:
+  placeholder: "e2e"

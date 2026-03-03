@@ -104,6 +104,25 @@ spec:
                 port:
                   number: 80
 ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress-kong
+  namespace: ingress-migration-mock
+spec:
+  ingressClassName: kong
+  rules:
+    - host: demo-kong.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-app
+                port:
+                  number: 80
+---
 # External database — no spec.selector, so its Endpoints are manually managed.
 # This is the kind of resource that must be migrated to EndpointSlice.
 apiVersion: v1
