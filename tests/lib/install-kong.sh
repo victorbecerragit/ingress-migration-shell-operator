@@ -67,4 +67,37 @@ kubectl get ingressclass kong >/dev/null 2>&1 || {
   exit 1
 }
 
+# The kong/ingress chart does not auto-create a GatewayClass; create it if absent.
+# The annotation marks it as unmanaged so KIC accepts an externally-created Gateway.
+if kubectl get gatewayclass kong >/dev/null 2>&1; then
+  log "GatewayClass 'kong' already exists"
+else
+  log "Creating GatewayClass 'kong' for KIC..."
+  kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kong
+  annotations:
+    konghq.com/gatewayclass-unmanaged: "true"
+spec:
+  controllerName: konghq.com/kic-gateway-controller
+EOF
+fi
+
+# Wait up to 30 s for KIC to accept the GatewayClass.
+for i in $(seq 1 30); do
+  accepted=$(kubectl get gatewayclass kong \
+    -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null)
+  if [ "$accepted" = "True" ]; then
+    break
+  fi
+  sleep 1
+done
+kubectl get gatewayclass kong \
+  -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' | grep -q "True" || {
+  echo "GatewayClass 'kong' was not accepted by KIC within 30s" >&2
+  exit 1
+}
+
 log "Kong is ready (namespace=$KONG_NAMESPACE, release=$KONG_RELEASE)"
