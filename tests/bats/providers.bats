@@ -69,3 +69,31 @@ setup() {
   run dispatch_provider "totally-unknown"
   [ "$status" -ne 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# Traefik — ingress2gateway does not support Traefik as a provider yet.
+# All aliases must be rejected so the hook fails fast with a clear message
+# rather than passing an invalid --providers flag to ingress2gateway.
+# ---------------------------------------------------------------------------
+
+@test "dispatch_provider: traefik is not a supported provider" {
+  run dispatch_provider "traefik"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"traefik"* ]]
+}
+
+@test "dispatch_provider: traefik-ingress is not a supported provider" {
+  run dispatch_provider "traefik-ingress"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"traefik"* ]]
+}
+
+@test "dispatch_provider: Traefik (uppercase) is not a valid alias" {
+  run dispatch_provider "Traefik"
+  [ "$status" -ne 0 ]
+}
+
+@test "dispatch_provider: traefik-proxy is not a valid alias" {
+  run dispatch_provider "traefik-proxy"
+  [ "$status" -ne 0 ]
+}

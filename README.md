@@ -23,6 +23,8 @@ migration is driven by an annotated ConfigMap trigger.
 - **Audit history** — append-only JSONL log of every run stored in a ConfigMap.
 - **Multi-provider** — `ingress-nginx`, `apisix`, `kong`, `kgateway` (gateway class override).
 
+> **Note — Traefik:** Traefik is not currently supported by `ingress2gateway` (the upstream conversion tool). Passing `providers: traefik` will fail fast with a clear error. Track support in [kubernetes-sigs/ingress2gateway](https://github.com/kubernetes-sigs/ingress2gateway).
+
 
 ## Prerequisites
 
@@ -182,7 +184,7 @@ kubectl get cm ingress-migration-history -n demo-prod \
 
 | Annotation | Default | Description |
 |---|---|---|
-| `ingress-migration.flant.com/providers` | — | Comma-separated providers: `ingress-nginx`, `apisix`, `kong` |
+| `ingress-migration.flant.com/providers` | — | Comma-separated providers: `ingress-nginx`, `apisix`, `kong` — **Traefik is not yet supported by `ingress2gateway`** |
 | `ingress-migration.flant.com/namespace-selector` | (all) | Namespace label selector to scope migration |
 | `ingress-migration.flant.com/dry-run` | `"true"` | Set to `"false"` to apply resources |
 | `ingress-migration.flant.com/gateway-class` | (provider default) | Override `gatewayClassName` in output |
