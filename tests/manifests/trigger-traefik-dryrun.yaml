@@ -1,0 +1,24 @@
+# Trigger ConfigMap used by e2e tests (Traefik provider).
+#
+# NOTE: ingress2gateway does not yet support Traefik as a --providers value
+# (supported: apisix cilium gce ingress-nginx istio kong nginx openapi3).
+# This manifest and the demo-ingress-traefik entry in mock-cluster.yaml are
+# kept as scaffolding so the e2e wiring is in place when upstream adds support.
+# The hook will currently fail fast at dispatch_provider with a clear error.
+#
+# Usage (will fail until ingress2gateway gains Traefik support):
+#   E2E_TRIGGER_MANIFEST=trigger-traefik-dryrun.yaml ./tests/run-e2e.sh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate-ingress-mock
+  namespace: ingress-migration-mock
+  labels:
+    ingress-migration.flant.com/trigger: "true"
+  annotations:
+    ingress-migration.flant.com/providers: "traefik"
+    ingress-migration.flant.com/dry-run: "true"
+    ingress-migration.flant.com/namespace-selector: "env=prod"
+    ingress-migration.flant.com/migrate-endpoints: "true"
+data:
+  placeholder: "e2e"

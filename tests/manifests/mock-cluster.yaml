@@ -123,6 +123,27 @@ spec:
                 port:
                   number: 80
 ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress-traefik
+  namespace: ingress-migration-mock
+  # Scaffolding: ingress2gateway does not yet support Traefik. This entry is
+  # kept so the cluster fixture is ready when upstream adds support.
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: demo-traefik.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-app
+                port:
+                  number: 80
+---
 # External database — no spec.selector, so its Endpoints are manually managed.
 # This is the kind of resource that must be migrated to EndpointSlice.
 apiVersion: v1

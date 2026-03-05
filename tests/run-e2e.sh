@@ -15,6 +15,7 @@ TRIGGER_MANIFEST=${E2E_TRIGGER_MANIFEST:-trigger-dryrun.yaml}
 E2E_INSTALL_APISIX=${E2E_INSTALL_APISIX:-auto}
 E2E_INSTALL_KGATEWAY=${E2E_INSTALL_KGATEWAY:-auto}
 E2E_INSTALL_KONG=${E2E_INSTALL_KONG:-auto}
+E2E_INSTALL_TRAEFIK=${E2E_INSTALL_TRAEFIK:-auto}
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -165,6 +166,29 @@ if [[ "$TRIGGER_MANIFEST" == *"kong"* ]]; then
       ;;
     *)
       die "Invalid E2E_INSTALL_KONG value: '$E2E_INSTALL_KONG' (use auto|1|0)"
+      ;;
+  esac
+fi
+
+if [[ "$TRIGGER_MANIFEST" == *"traefik"* ]]; then
+  case "$E2E_INSTALL_TRAEFIK" in
+    1|true|yes)
+      echo "Installing Traefik Ingress Controller (forced via E2E_INSTALL_TRAEFIK=$E2E_INSTALL_TRAEFIK)"
+      bash "$ROOT_DIR/tests/lib/install-traefik.sh"
+      ;;
+    auto)
+      if [[ "$USE_KIND" == "1" ]]; then
+        echo "Installing Traefik Ingress Controller (auto; Kind E2E + traefik trigger)"
+        bash "$ROOT_DIR/tests/lib/install-traefik.sh"
+      else
+        echo "Skipping Traefik install (E2E_KIND!=1). Set E2E_INSTALL_TRAEFIK=1 to install on the current cluster."
+      fi
+      ;;
+    0|false|no)
+      echo "Skipping Traefik install (E2E_INSTALL_TRAEFIK=$E2E_INSTALL_TRAEFIK)"
+      ;;
+    *)
+      die "Invalid E2E_INSTALL_TRAEFIK value: '$E2E_INSTALL_TRAEFIK' (use auto|1|0)"
       ;;
   esac
 fi

@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/release/victorbecerragit/ingress-migration-shell-operator.svg)](https://github.com/victorbecerragit/ingress-migration-shell-operator/releases)
 [![Helm Chart](https://img.shields.io/badge/helm--chart-v0.3.0-blue?logo=helm)](https://github.com/victorbecerragit/ingress-migration-shell-operator/releases)
 [![Shell Operator](https://img.shields.io/badge/shell--operator-v1.4.16-informational?logo=linux)](https://github.com/flant/shell-operator)
+[![ingress2gateway](https://img.shields.io/badge/ingress2gateway-v0.5.0-brightgreen?logo=kubernetes)](https://github.com/kubernetes-sigs/ingress2gateway/releases/tag/v0.5.0)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Kubernetes-native tool to convert Ingress resources to Gateway API (HTTPRoutes + Gateways)
@@ -22,6 +23,8 @@ migration is driven by an annotated ConfigMap trigger.
 - **Rollback hook** — removes applied HTTPRoutes on demand.
 - **Audit history** — append-only JSONL log of every run stored in a ConfigMap.
 - **Multi-provider** — `ingress-nginx`, `apisix`, `kong`, `kgateway` (gateway class override).
+
+> **Note — Traefik:** Traefik is not currently supported by `ingress2gateway` (the upstream conversion tool). Passing `providers: traefik` will fail fast with a clear error. Track support in [kubernetes-sigs/ingress2gateway](https://github.com/kubernetes-sigs/ingress2gateway).
 
 
 ## Prerequisites
@@ -182,7 +185,7 @@ kubectl get cm ingress-migration-history -n demo-prod \
 
 | Annotation | Default | Description |
 |---|---|---|
-| `ingress-migration.flant.com/providers` | — | Comma-separated providers: `ingress-nginx`, `apisix`, `kong` |
+| `ingress-migration.flant.com/providers` | — | Comma-separated providers: `ingress-nginx`, `apisix`, `kong` — **Traefik is not yet supported by `ingress2gateway`** |
 | `ingress-migration.flant.com/namespace-selector` | (all) | Namespace label selector to scope migration |
 | `ingress-migration.flant.com/dry-run` | `"true"` | Set to `"false"` to apply resources |
 | `ingress-migration.flant.com/gateway-class` | (provider default) | Override `gatewayClassName` in output |
