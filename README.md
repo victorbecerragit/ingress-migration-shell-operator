@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/release/victorbecerragit/ingress-migration-shell-operator.svg)](https://github.com/victorbecerragit/ingress-migration-shell-operator/releases)
 [![Helm Chart](https://img.shields.io/badge/helm--chart-v0.3.0-blue?logo=helm)](https://github.com/victorbecerragit/ingress-migration-shell-operator/releases)
 [![Shell Operator](https://img.shields.io/badge/shell--operator-v1.4.16-informational?logo=linux)](https://github.com/flant/shell-operator)
+[![ingress2gateway](https://img.shields.io/badge/ingress2gateway-v0.5.0-brightgreen?logo=kubernetes)](https://github.com/kubernetes-sigs/ingress2gateway/releases/tag/v0.5.0)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Kubernetes-native tool to convert Ingress resources to Gateway API (HTTPRoutes + Gateways)
