@@ -43,6 +43,23 @@ then assert the trigger ConfigMap is patched correctly.
 > `ingress-nginx` webhook rejections. Annotations like `use-regex` and
 > `rewrite-target` are retained so the NGINX preflight scanner still fires.
 
+### Using `make` (recommended)
+
+The Makefile wraps all E2E variants behind a single target:
+
+```bash
+make test-e2e PROVIDER=nginx
+make test-e2e PROVIDER=kgateway-dev
+make test-e2e PROVIDER=apisix
+make test-e2e PROVIDER=kong
+
+# Run all four providers in sequence
+make test-e2e-all
+```
+
+Each target creates a temporary Kind cluster, installs the relevant controller,
+runs `tests/run-e2e.sh`, then deletes the cluster.
+
 ### Run against your current cluster
 
 ```bash
@@ -156,7 +173,47 @@ is a multi-document YAML combining two sections:
 The golden ConfigMap is **not** a real workload resource; it exists solely as
 structured documentation that can be read programmatically or compared manually.
 
-### `nginx-regex-gotcha` — use-regex + rewrite-target + shared host
+### Running golden tests with `make`
+
+The automated runner (`tests/run-golden.sh`) uses JSON fixture pairs and
+requires no cluster:
+
+| File | Role |
+|---|---|
+| `testdata/<scenario>-input.json` | `IngressList` fed to the preflight scanner |
+| `testdata/<scenario>-warnings.json` | Expected warning objects (sorted by `.code`) |
+
+Run all golden tests:
+
+```bash
+make test-golden
+
+# or directly:
+bash tests/run-golden.sh
+```
+
+Run a single scenario by name:
+
+```bash
+GOLDEN_FILTER=nginx-regex-gotcha bash tests/run-golden.sh
+```
+
+The runner auto-discovers every `testdata/*-input.json`, calls
+`nginx_gotchas_warnings_from_ingress_list` from `scripts/lib/nginx_gotchas.sh`,
+and diffs the output (sorted by `.code`) against the matching `*-warnings.json`.
+Any mismatch prints a unified diff and exits 1.
+
+To add a new golden scenario:
+
+1. Create `testdata/<scenario>-input.json` — an `IngressList` in JSON.
+2. Run `bash tests/run-golden.sh 2>&1` — the diff showing the actual output
+   tells you what to put in the expected file.
+3. Save that output as `testdata/<scenario>-warnings.json`.
+4. Re-run `make test-golden` to confirm green.
+
+---
+
+### `nginx-regex-gotcha` — use-regex + rewrite-target + shared host (manual walkthrough)
 
 File: [`testdata/nginx-regex-gotcha.yaml`](../testdata/nginx-regex-gotcha.yaml)
 

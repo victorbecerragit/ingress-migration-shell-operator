@@ -332,3 +332,46 @@ Contributions and feedback welcome — open an issue on [GitHub](https://github.
 ## Testing & Development
 
 See [docs/testing.md](docs/testing.md) for unit tests, E2E tests, provider-specific test suites, and guidance on adding or modifying test fixtures.
+
+## Contributing
+
+Contributions are welcome! The project is intentionally plain Bash — no build
+toolchain required to extend it.
+
+### Adding a new provider emitter
+
+Provider post-processing lives in `scripts/lib/`. Each provider has a dedicated
+file (e.g. `scripts/lib/apisix.sh`) with a single entry-point function
+`postprocess_<provider>`. To add support for a new ingress controller:
+
+1. Create `scripts/lib/<provider>.sh` with a `postprocess_<provider>` function.
+2. Register the provider alias in `scripts/lib/provider.sh` (the `case` block
+   that maps ingress class names to canonical provider names).
+3. Add a dry-run trigger manifest `tests/manifests/trigger-<provider>-dryrun.yaml`.
+4. Add a controller installer `tests/lib/install-<provider>.sh` for Kind-based E2E.
+5. Add `<provider>` to the `matrix.provider` list in `.github/workflows/ci.yaml`.
+6. Run `make test-e2e PROVIDER=<provider>` locally before opening a PR.
+
+### Adding a new NGINX annotation mapping or gotcha
+
+NGINX preflight detection lives in `scripts/lib/nginx_gotchas.sh`. Each gotcha
+is a self-contained check that receives parsed Ingress JSON and emits a warning
+object `{ code, severity, host, ingress, message }`.
+
+1. Add a function `_check_<WARNING_CODE>` inside `nginx_gotchas.sh`.
+2. Call it from `nginx_gotchas_warnings_from_ingress_list`.
+3. Add a golden fixture pair in `testdata/`:
+   - `testdata/<scenario>-input.json` — an `IngressList` in JSON
+   - `testdata/<scenario>-warnings.json` — the expected warnings array (sorted by `.code`)
+4. Verify with `make test-golden`.
+
+### Providers we'd love contributions for
+
+| Provider | Status | Notes |
+|---|---|---|
+| **Traefik** | Blocked upstream | `ingress2gateway` does not yet support Traefik |
+| **HAProxy** | Open | Widely deployed; no migration tooling today |
+| **Istio VirtualService** | Open | Common migration path to HTTPRoute |
+
+Open an [issue](https://github.com/victorbecerragit/ingress-migration-shell-operator/issues)
+to discuss before starting large changes.
