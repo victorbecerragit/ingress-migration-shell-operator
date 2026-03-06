@@ -1,0 +1,214 @@
+# testdata/nginx-regex-gotcha.yaml
+#
+# Golden test fixture — NGINX use-regex + rewrite-target + shared host
+# ─────────────────────────────────────────────────────────────────────
+#
+# Scenario
+# ─────────
+# Two Ingresses share host api.example.com in namespace golden-test.
+#
+#   api-main   — annotations:
+#                  use-regex: "true"         ← enables regex matching for ALL paths
+#                  rewrite-target: /$1           of this host across all Ingresses
+#                path: /api/(.+)  pathType: ImplementationSpecific
+#                service → api-svc:80
+#
+#   api-shared — no annotations; plain Prefix path /health on the same host.
+#                service → health-svc:80
+#                Under Ingress-NGINX, api-main's use-regex applies HOST-WIDE,
+#                so api-shared's /health is also evaluated with regex semantics.
+#                This is the NGINX_REGEX_HOST_WIDE gotcha.
+#
+# Expected preflight warnings  (nginx_gotchas_warnings_from_ingress_list)
+# ─────────────────────────────────────────────────────────────────────────
+#   ①  NGINX_REGEX_PREFIX_CASE_INSENSITIVE  host=api.example.com
+#   ②  NGINX_REGEX_HOST_WIDE                host=api.example.com  (2 ingresses share host)
+#   ③  NGINX_REWRITE_TARGET_IMPLIES_REGEX   host=api.example.com  ingress=golden-test/api-main
+#
+# Expected HTTPRoute gap
+# ───────────────────────
+#   ingress2gateway converts api-main → HTTPRoute with path RegularExpression /api/(.+),
+#   but DROPS the rewrite-target: /$1 annotation — no URLRewrite filter is emitted.
+#   The provider-extras post-processing stub (scripts/migrate.sh) must inject
+#   the URLRewrite filter to restore equivalent rewrite semantics.
+#
+# Usage
+# ──────
+#   # Apply all input resources:
+#   kubectl apply -f testdata/nginx-regex-gotcha.yaml
+#
+#   # Run preflight scanner; sort by code for stable comparison:
+#   kubectl get ingress -n golden-test -o json | \
+#     bash -c "source scripts/lib/nginx_gotchas.sh; nginx_gotchas_warnings_from_ingress_list" | \
+#     jq 'sort_by(.code)'
+#
+#   # Compare output against expected-warnings in the golden ConfigMap at the end of this file.
+#
+#   # Clean up:
+#   kubectl delete namespace golden-test
+#
+# See docs/testing.md § "Golden Tests" for full description.
+
+---
+# ────────────────────────────────────────────────────
+# Section 1 — Input resources  (kubectl apply-able)
+# ────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: golden-test
+  labels:
+    ingress-migration.flant.com/golden-test: "nginx-regex-gotcha"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-svc
+  namespace: golden-test
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: health-svc
+  namespace: golden-test
+spec:
+  selector:
+    app: health
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+# api-main: use-regex + rewrite-target.
+# Triggers three preflight warnings. rewrite-target: /$1 is SILENTLY DROPPED by
+# ingress2gateway — see expected-httproute-api-main in the golden ConfigMap below.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-main
+  namespace: golden-test
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: api.example.com
+    http:
+      paths:
+      - path: /api/(.+)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api-svc
+            port:
+              number: 80
+---
+# api-shared: no regex annotations, but shares host api.example.com with api-main.
+# Under Ingress-NGINX, api-main's use-regex applies host-wide — api-shared inherits
+# regex semantics silently (NGINX_REGEX_HOST_WIDE warning fires for this host).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-shared
+  namespace: golden-test
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: api.example.com
+    http:
+      paths:
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: health-svc
+            port:
+              number: 80
+---
+# ────────────────────────────────────────────────────
+# Section 2 — Golden expectations
+#
+# This ConfigMap is NOT a real workload resource. Its data fields document
+# expected test outputs for automated and manual verification.
+# ────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-regex-gotcha-expected
+  namespace: golden-test
+  labels:
+    ingress-migration.flant.com/golden-test: "nginx-regex-gotcha"
+data:
+  # Expected output of nginx_gotchas_warnings_from_ingress_list for the two Ingresses above.
+  # Sorted by code for stable comparison:
+  #   jq 'sort_by(.code)'
+  #
+  # Note: the unsorted order emitted by the scanner is:
+  #   NGINX_REGEX_PREFIX_CASE_INSENSITIVE → NGINX_REGEX_HOST_WIDE → NGINX_REWRITE_TARGET_IMPLIES_REGEX
+  expected-warnings: |
+    [
+      {
+        "code": "NGINX_REGEX_PREFIX_CASE_INSENSITIVE",
+        "severity": "warning",
+        "message": "Ingress-NGINX regex path matching is prefix-based and case-insensitive; your Gateway API controller may treat regex differently. Review regex paths carefully.",
+        "host": "api.example.com"
+      },
+      {
+        "code": "NGINX_REGEX_HOST_WIDE",
+        "severity": "warning",
+        "message": "Ingress-NGINX enables regex semantics for all paths of the same host across all Ingresses when any Ingress for that host uses use-regex or rewrite-target.",
+        "host": "api.example.com"
+      },
+      {
+        "code": "NGINX_REWRITE_TARGET_IMPLIES_REGEX",
+        "severity": "warning",
+        "message": "Ingress-NGINX rewrite-target implies regex-style path matching for the host; this can change how other paths are interpreted.",
+        "host": "api.example.com",
+        "ingress": "golden-test/api-main"
+      }
+    ]
+
+  # HTTPRoute produced by: ingress2gateway print --providers=ingress-nginx --namespace golden-test
+  # This snippet covers api-main only. api-shared generates a plain PathPrefix HTTPRoute
+  # with no annotations dropped (no gotcha there).
+  #
+  # GOTCHA: rewrite-target: /$1 is SILENTLY DROPPED by ingress2gateway.
+  # No URLRewrite filter appears in the output — this is the gap the provider-extras
+  # post-processing stub must fill.  See the comment block at the end of this value for
+  # the URLRewrite filter that should be injected after conversion.
+  expected-httproute-api-main: |
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: api-main
+      namespace: golden-test
+    spec:
+      parentRefs:
+      - name: nginx
+        namespace: golden-test
+      rules:
+      - matches:
+        - path:
+            type: RegularExpression
+            value: /api/(.+)
+        backendRefs:
+        - name: api-svc
+          port: 80
+    # ── Gap: rewrite-target /$1 was dropped by ingress2gateway ───────────────
+    # After provider-extras post-processing the rule SHOULD carry:
+    #
+    #       filters:
+    #       - type: URLRewrite
+    #         urlRewrite:
+    #           path:
+    #             type: ReplaceFullPath
+    #             replaceFullPath: /$1
+    #
+    # Without this filter, requests to /api/foo reach the backend as /api/foo
+    # instead of the intended /foo — breaking the rewrite semantics.

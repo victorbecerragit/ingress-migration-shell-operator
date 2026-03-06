@@ -143,6 +143,81 @@ bash tests/run-manual.sh
 
 ---
 
+## Golden Tests
+
+Golden test fixtures live in `testdata/` at the repository root. Each file
+is a multi-document YAML combining two sections:
+
+| Section | Content |
+|---|---|
+| **Section 1 — Input** | `Namespace`, `Service`, and `Ingress` manifests — `kubectl apply`-able to a real cluster |
+| **Section 2 — Golden ConfigMap** | `expected-warnings` (JSON) and `expected-httproute-*` (YAML snippet) documenting expected outputs and known conversion gaps |
+
+The golden ConfigMap is **not** a real workload resource; it exists solely as
+structured documentation that can be read programmatically or compared manually.
+
+### `nginx-regex-gotcha` — use-regex + rewrite-target + shared host
+
+File: [`testdata/nginx-regex-gotcha.yaml`](../testdata/nginx-regex-gotcha.yaml)
+
+**Scenario:** Two Ingresses (`api-main`, `api-shared`) share host `api.example.com`
+in namespace `golden-test`. `api-main` sets `use-regex: "true"` and
+`rewrite-target: /$1`; `api-shared` has no annotations but silently inherits
+regex semantics host-wide — the `NGINX_REGEX_HOST_WIDE` gotcha.
+
+**Step 1 — Apply the input resources:**
+
+```bash
+kubectl apply -f testdata/nginx-regex-gotcha.yaml
+kubectl get ingress -n golden-test
+```
+
+**Step 2 — Run the preflight scanner:**
+
+```bash
+kubectl get ingress -n golden-test -o json | \
+  bash -c "source scripts/lib/nginx_gotchas.sh; nginx_gotchas_warnings_from_ingress_list" | \
+  jq 'sort_by(.code)'
+```
+
+**Expected warnings (3):**
+
+| # | Code | Severity | Host | Ingress |
+|---|---|---|---|---|
+| 1 | `NGINX_REGEX_PREFIX_CASE_INSENSITIVE` | warning | `api.example.com` | — |
+| 2 | `NGINX_REGEX_HOST_WIDE` | warning | `api.example.com` | — |
+| 3 | `NGINX_REWRITE_TARGET_IMPLIES_REGEX` | warning | `api.example.com` | `golden-test/api-main` |
+
+Compare jq output against the `expected-warnings` field in the golden ConfigMap:
+
+```bash
+kubectl get cm nginx-regex-gotcha-expected -n golden-test \
+  -o go-template='{{index .data "expected-warnings"}}'
+```
+
+**Step 3 — Observe the HTTPRoute conversion gap:**
+
+```bash
+ingress2gateway print --providers=ingress-nginx --namespace golden-test
+```
+
+The generated HTTPRoute for `api-main` will carry `path.type: RegularExpression`
+correctly but will **omit the `URLRewrite` filter** — `rewrite-target: /$1` is
+silently dropped by `ingress2gateway`. Without the filter, requests to `/api/foo`
+reach the backend as `/api/foo` rather than `/foo`.
+
+The `expected-httproute-api-main` field in the golden ConfigMap documents this
+gap and shows the `URLRewrite` filter block that the provider-extras
+post-processing stub (tracked in the [Roadmap](../README.md#roadmap)) must inject.
+
+**Clean up:**
+
+```bash
+kubectl delete namespace golden-test
+```
+
+---
+
 ## Adding / Modifying Tests
 
 | What to change | Where |
