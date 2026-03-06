@@ -95,6 +95,11 @@ run_migration() {
     # that is later piped to `kubectl apply -f -`.
     local _i2g_err
     _i2g_err=$(mktemp)
+    # Guarantee cleanup even if set -e triggers an unexpected early exit between
+    # mktemp and the explicit rm calls below.  RETURN fires on every exit path
+    # of this function; rm -f is a no-op if the file was already removed.
+    # shellcheck disable=SC2064
+    trap "rm -f '${_i2g_err}'" RETURN
     OUT=$("$ingress2gateway_bin" "${args[@]}" 2>"$_i2g_err") || {
         echo "Error running ingress2gateway: $(cat "$_i2g_err")"
         rm -f "$_i2g_err"
@@ -102,7 +107,17 @@ run_migration() {
         return 1
     }
     if [[ -s "$_i2g_err" ]]; then
-        echo "ingress2gateway warnings: $(cat "$_i2g_err")"
+        local _i2g_warnings
+        _i2g_warnings=$(cat "$_i2g_err")
+        echo "ingress2gateway warnings: ${_i2g_warnings}"
+        # Surface ingress2gateway stderr (annotation-drop notices, unsupported
+        # field warnings, etc.) in the migration report alongside NGINX preflight
+        # output so all conversion warnings appear together in the status ConfigMap.
+        if [[ -n "${NGINX_WARNINGS_TEXT}" ]]; then
+            NGINX_WARNINGS_TEXT+=$'\n'"${_i2g_warnings}"
+        else
+            NGINX_WARNINGS_TEXT="${_i2g_warnings}"
+        fi
     fi
     rm -f "$_i2g_err"
 
@@ -300,6 +315,84 @@ migrate_endpoints() {
     ENDPOINT_COUNT=$((ENDPOINT_COUNT + converted))
 }
 
+# ---------------------------------------------------------------------------
+# Provider-specific post-processing hooks (run after ingress2gateway conversion)
+# ---------------------------------------------------------------------------
+
+# generate_kong_plugins_from_nginx_annotations
+#   Walks original Ingress objects and emits KongPlugin CRs for annotations
+#   that ingress2gateway does not translate automatically.
+#
+# Future mappings to implement:
+#   nginx.ingress.kubernetes.io/limit-rps         → KongPlugin (rate-limiting)
+#   nginx.ingress.kubernetes.io/limit-connections → KongPlugin (rate-limiting)
+#   nginx.ingress.kubernetes.io/auth-url          → KongPlugin (oidc/oauth2)
+#   nginx.ingress.kubernetes.io/proxy-body-size   → KongPlugin (request-size-limiting)
+#   nginx.ingress.kubernetes.io/ssl-redirect      → HTTPRoute redirect filter (no KongPlugin needed)
+#   konghq.com/plugins                            → preserve KongPlugin refs on generated HTTPRoute
+generate_kong_plugins_from_nginx_annotations() {
+    local ns=$1
+    # TODO: implement annotation-to-KongPlugin translation.
+    echo "TODO: map nginx.ingress.kubernetes.io/limit-rps → KongPlugin (ns=${ns:-<cluster-wide>})"
+}
+
+# generate_apisix_plugins_from_annotations
+#   Walks original Ingress objects and emits APISix-native CRs for annotations
+#   that ingress2gateway does not translate automatically.
+#
+# Future mappings to implement:
+#   k8s.apisix.apache.org/plugin-config-name  → ApisixPluginConfig ref on generated ApisixRoute
+#   k8s.apisix.apache.org/blocklist-source-range → ApisixPlugin (ip-restriction)
+#   k8s.apisix.apache.org/allowlist-source-range → ApisixPlugin (ip-restriction)
+#   k8s.apisix.apache.org/upstream-scheme       → ApisixUpstream upstream scheme override
+#   k8s.apisix.apache.org/http-to-https         → HTTPRoute redirect filter (no ApisixPlugin needed)
+#   nginx.ingress.kubernetes.io/limit-rps        → ApisixPlugin (limit-count) when provider=apisix
+generate_apisix_plugins_from_annotations() {
+    local ns=$1
+    # TODO: implement annotation-to-ApisixPlugin/ApisixPluginConfig translation.
+    echo "TODO: map k8s.apisix.apache.org/plugin-config-name → ApisixPluginConfig (ns=${ns:-<cluster-wide>})"
+}
+
+# generate_kgateway_policies_from_annotations
+#   Walks original Ingress objects and emits kgateway policy-attachment CRs for
+#   annotations that ingress2gateway does not translate automatically.
+#
+# Future mappings to implement:
+#   nginx.ingress.kubernetes.io/limit-rps            → RouteOption (rateLimit policy)
+#   nginx.ingress.kubernetes.io/limit-connections    → RouteOption (connectionLimit policy)
+#   nginx.ingress.kubernetes.io/auth-url             → RouteOption (extAuth policy)
+#   nginx.ingress.kubernetes.io/proxy-body-size      → RouteOption (bufferPolicy)
+#   nginx.ingress.kubernetes.io/configuration-snippet → RouteOption (transformations)
+#   nginx.ingress.kubernetes.io/rewrite-target       → RouteOption (transformations) or HTTPRoute pathRewrite
+#   nginx.ingress.kubernetes.io/ssl-redirect         → HTTPRoute redirect filter (no RouteOption needed)
+generate_kgateway_policies_from_annotations() {
+    local ns=$1
+    # TODO: implement annotation-to-RouteOption/VirtualHostOption translation.
+    echo "TODO: map nginx.ingress.kubernetes.io/limit-rps → kgateway RouteOption (ns=${ns:-<cluster-wide>})"
+}
+
+# generate_gateway_native_extensions_from_nginx_annotations
+#   Walks original Ingress objects and emits standard Gateway API resources
+#   (HTTPRoute filter patches, BackendLBPolicy, BackendTLSPolicy) for nginx
+#   annotations that ingress2gateway does not translate automatically.
+#
+# Future mappings to implement:
+#   nginx.ingress.kubernetes.io/ssl-redirect        → HTTPRoute redirect filter (code 301/308)
+#   nginx.ingress.kubernetes.io/permanent-redirect  → HTTPRoute redirect filter (code 301)
+#   nginx.ingress.kubernetes.io/temporal-redirect   → HTTPRoute redirect filter (code 302)
+#   nginx.ingress.kubernetes.io/rewrite-target      → HTTPRoute URLRewrite filter
+#   nginx.ingress.kubernetes.io/use-regex           → HTTPRoute path RegularExpression match
+#   nginx.ingress.kubernetes.io/enable-cors         → HTTPRoute ResponseHeaderModifier filter (experimental)
+#   nginx.ingress.kubernetes.io/cors-allow-origin   → HTTPRoute ResponseHeaderModifier filter (experimental)
+#   nginx.ingress.kubernetes.io/proxy-read-timeout  → BackendLBPolicy timeout (experimental)
+#   nginx.ingress.kubernetes.io/proxy-send-timeout  → BackendLBPolicy timeout (experimental)
+#   nginx.ingress.kubernetes.io/proxy-body-size     → no standard GA equivalent yet
+generate_gateway_native_extensions_from_nginx_annotations() {
+    local ns=$1
+    # TODO: implement annotation-to-HTTPRoute-filter / BackendLBPolicy translation.
+    echo "TODO: map nginx annotations → native Gateway API HTTPRoute filters (ns=${ns:-<cluster-wide>})"
+}
+
 CONTEXT_FILE="$BINDING_CONTEXT_PATH"
 echo "Processing hook context from $CONTEXT_FILE"
 
@@ -371,6 +464,17 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
               BEFORE_INGRESS_SAMPLE+="\n"
             fi
             run_migration "$namespace" || break
+            # Provider-specific post-processing: generate supplemental resources
+            # that ingress2gateway does not produce (e.g. KongPlugin CRs).
+            if [[ "$PROVIDERS" == kong* ]]; then
+                generate_kong_plugins_from_nginx_annotations "$namespace"
+            elif [[ "$PROVIDERS" == "apisix" ]]; then
+                generate_apisix_plugins_from_annotations "$namespace"
+            elif [[ "$PROVIDERS" == kgateway* ]]; then
+                generate_kgateway_policies_from_annotations "$namespace"
+            elif [[ "$PROVIDERS" == "ingress-nginx" ]]; then
+                generate_gateway_native_extensions_from_nginx_annotations "$namespace"
+            fi
             if [ "$MIGRATE_ENDPOINTS" = "true" ]; then
                 migrate_endpoints "$namespace"
             fi
@@ -382,6 +486,16 @@ jq -c '.[]' "$CONTEXT_FILE" | while read -r event; do
         BEFORE_INGRESS_COUNT=$((BEFORE_INGRESS_COUNT + local_ing_count))
         BEFORE_INGRESS_SAMPLE=$(kubectl get ingress -A -o name 2>/dev/null | head -n 10 || true)
         run_migration ""
+        # Provider-specific post-processing (cluster-wide).
+        if [[ "$PROVIDERS" == kong* ]]; then
+            generate_kong_plugins_from_nginx_annotations ""
+        elif [[ "$PROVIDERS" == "apisix" ]]; then
+            generate_apisix_plugins_from_annotations ""
+        elif [[ "$PROVIDERS" == kgateway* ]]; then
+            generate_kgateway_policies_from_annotations ""
+        elif [[ "$PROVIDERS" == "ingress-nginx" ]]; then
+            generate_gateway_native_extensions_from_nginx_annotations ""
+        fi
         if [ "$MIGRATE_ENDPOINTS" = "true" ]; then
             migrate_endpoints ""
         fi

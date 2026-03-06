@@ -12,7 +12,23 @@ using [`ingress2gateway`](https://github.com/kubernetes-sigs/ingress2gateway) an
 [Shell Operator](https://github.com/flant/shell-operator). No Go, no controllers to write —
 migration is driven by an annotated ConfigMap trigger.
 
-> **Why?** The [ingress-nginx controller is deprecated](https://kubernetes.github.io/ingress-nginx/) and the Kubernetes project recommends migrating to the Gateway API. This tool automates that migration.
+## Why?
+
+The [ingress-nginx controller is deprecated](https://kubernetes.github.io/ingress-nginx/) and the Kubernetes project recommends migrating to the Gateway API. This tool automates that migration.
+
+### How does it compare?
+
+| Tool | Language | Trigger Model | Multi-Provider | Preflight Warnings | Audit History |
+|---|---|---|---|---|---|
+| **ingress-migration-shell-operator** *(this project)* | Bash (no Go) | **Annotated ConfigMap** — GitOps/ArgoCD-native, live-watched by shell-operator | ✅ ingress-nginx, apisix, kong, kgateway | ✅ NGINX-specific gotchas (regex paths, rewrite-target, trailing-slash redirects) | ✅ Append-only JSONL in a ConfigMap, bounded rolling window |
+| [ingress2gateway](https://github.com/kubernetes-sigs/ingress2gateway) | Go | CLI / one-shot binary | ✅ ingress-nginx, apisix, kong, kgateway, Istio, … | ❌ | ❌ |
+| [IBM iks-ingress-migration-tool](https://github.com/IBM/iks-ingress-migration-tool) | Go | CLI / one-shot binary | ❌ IBM ALB only | ❌ | ❌ |
+
+**Unique strengths of this project:**
+- **No Go required** — the entire operator is plain Bash; easy to audit, fork, and extend without a build toolchain.
+- **ConfigMap trigger model** — declare intent in a ConfigMap annotation; shell-operator watches for the label and fires the hook automatically. Works natively with GitOps workflows.
+- **NGINX preflight scanner** — warns about patterns that `ingress2gateway` silently drops or mis-converts (regex paths with `use-regex`, `rewrite-target` capture groups, trailing-slash redirect annotations).
+- **Built-in audit trail** — every run is logged to a bounded JSONL history ConfigMap; no external log aggregator needed.
 
 ## Features
 
@@ -32,6 +48,109 @@ migration is driven by an annotated ConfigMap trigger.
 - Kubernetes cluster with [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) installed
 - Helm v3
 - A supported Gateway API controller installed and running (e.g. [`kgateway`](https://kgateway.dev), [`kong`](https://docs.konghq.com/kubernetes-ingress-controller/), [`cloud-provider-kind`](https://github.com/kubernetes-sigs/cloud-provider-kind) for local Kind clusters)
+
+## Quickstart (Kind + kgateway-dev)
+
+End-to-end walkthrough on a local Kind cluster with the kgateway-dev (nightly) channel.
+Every command below is copy-paste testable; the whole sequence takes ~5 minutes.
+
+### 1. Create a Kind cluster
+
+```bash
+kind create cluster --name migration-demo
+kubectl cluster-info --context kind-migration-demo
+```
+
+### 2. Install Gateway API CRDs
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```
+
+### 3. Install kgateway-dev (nightly channel)
+
+```bash
+helm repo add kgateway-dev https://storage.googleapis.com/kgateway-dev-helm
+helm repo update
+helm install kgateway kgateway-dev/kgateway \
+  --namespace kgateway-system \
+  --create-namespace \
+  --set image.tag=latest \
+  --wait
+```
+
+Verify the controller is running:
+
+```bash
+kubectl get pods -n kgateway-system
+```
+
+### 4. Install this operator
+
+```bash
+helm repo add ingress-migration https://victorbecerragit.github.io/ingress-migration-shell-operator
+helm repo update
+helm install ingress-migration ingress-migration/ingress-migration-shell-operator \
+  --namespace ingress-migration-system \
+  --create-namespace \
+  --wait
+```
+
+### 5. Deploy the demo app and Ingress
+
+```bash
+kubectl apply -f demo/manifests/app.yaml
+kubectl apply -f demo/manifests/ingress.yaml
+```
+
+Confirm the Ingress is created:
+
+```bash
+kubectl get ingress -A
+```
+
+### 6. Trigger a dry-run migration
+
+```bash
+kubectl apply -f demo/manifests/trigger-apply.yaml
+```
+
+Watch the operator hook execute:
+
+```bash
+kubectl logs -n ingress-migration-system \
+  -l app.kubernetes.io/name=shell-operator --follow
+```
+
+### 7. Read the migration report
+
+```bash
+kubectl get cm migrate-ingress-demo -n demo-prod \
+  -o go-template='{{index .data "report"}}'
+```
+
+### 8. Apply for real (optional)
+
+Edit the trigger ConfigMap to set `dry-run: "false"` and re-apply:
+
+```bash
+kubectl annotate cm migrate-ingress-demo -n demo-prod \
+  ingress-migration.flant.com/dry-run="false" --overwrite
+kubectl label cm migrate-ingress-demo -n demo-prod \
+  ingress-migration.flant.com/trigger=true --overwrite
+```
+
+Then check the created HTTPRoutes and Gateways:
+
+```bash
+kubectl get httproute,gateway -A
+```
+
+### 9. Clean up
+
+```bash
+kind delete cluster --name migration-demo
+```
 
 ## Install
 
@@ -195,6 +314,20 @@ kubectl get cm ingress-migration-history -n demo-prod \
 | `ingress-migration.flant.com/history-enabled` | `"true"` | Disable history writes per trigger |
 | `ingress-migration.flant.com/history-configmap` | `ingress-migration-history` | Name of the history ConfigMap |
 | `ingress-migration.flant.com/history-max-entries` | `"100"` | Rolling window size for history |
+
+## Roadmap
+
+Contributions and feedback welcome — open an issue on [GitHub](https://github.com/victorbecerragit/ingress-migration-shell-operator/issues).
+
+- [x] **NGINX warnings** — preflight scanner detects risky annotation patterns (`use-regex`, `rewrite-target`, trailing-slash redirects) before conversion and surfaces counts in the report and ConfigMap status
+- [ ] **Provider extras** — implement the post-processing stubs to preserve provider-native annotations dropped by `ingress2gateway`:
+  - `ingress-nginx` → native HTTPRoute filters (ssl-redirect, rewrite-target, use-regex, CORS, BackendLBPolicy timeouts)
+  - `kong` → `KongPlugin` CRs (rate-limiting, auth-url, proxy-body-size)
+  - `apisix` → `ApisixPluginConfig` CRs (plugin-config-name, allowlist/blocklist)
+  - `kgateway` → `RouteOption` / `VirtualHostOption` policy attachments (rate-limit, extAuth, rewrite)
+- [ ] **Rollback providers** — extend the rollback hook to also delete provider-specific CRs (`KongPlugin`, `ApisixPluginConfig`, `RouteOption`, etc.) created by the provider-extras step
+- [ ] **Webhook** — optional admission webhook to block Ingress creation once migration is complete (enforce no-new-Ingress policy)
+- [ ] **Metrics** — expose Prometheus metrics: `ingress_migration_runs_total`, `ingress_migration_httproutes_converted`, `ingress_migration_warnings_total`, `ingress_migration_errors_total`
 
 ## Testing & Development
 

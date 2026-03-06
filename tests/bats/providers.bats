@@ -60,9 +60,10 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "dispatch_provider: kgateway-dev is not a provider" {
+@test "dispatch_provider: kgateway-dev is an alias for kgateway" {
   run dispatch_provider "kgateway-dev"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "kgateway" ]
 }
 
 @test "dispatch_provider: unknown provider fails" {
