@@ -49,6 +49,109 @@ The [ingress-nginx controller is deprecated](https://kubernetes.github.io/ingres
 - Helm v3
 - A supported Gateway API controller installed and running (e.g. [`kgateway`](https://kgateway.dev), [`kong`](https://docs.konghq.com/kubernetes-ingress-controller/), [`cloud-provider-kind`](https://github.com/kubernetes-sigs/cloud-provider-kind) for local Kind clusters)
 
+## Quickstart (Kind + kgateway-dev)
+
+End-to-end walkthrough on a local Kind cluster with the kgateway-dev (nightly) channel.
+Every command below is copy-paste testable; the whole sequence takes ~5 minutes.
+
+### 1. Create a Kind cluster
+
+```bash
+kind create cluster --name migration-demo
+kubectl cluster-info --context kind-migration-demo
+```
+
+### 2. Install Gateway API CRDs
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```
+
+### 3. Install kgateway-dev (nightly channel)
+
+```bash
+helm repo add kgateway-dev https://storage.googleapis.com/kgateway-dev-helm
+helm repo update
+helm install kgateway kgateway-dev/kgateway \
+  --namespace kgateway-system \
+  --create-namespace \
+  --set image.tag=latest \
+  --wait
+```
+
+Verify the controller is running:
+
+```bash
+kubectl get pods -n kgateway-system
+```
+
+### 4. Install this operator
+
+```bash
+helm repo add ingress-migration https://victorbecerragit.github.io/ingress-migration-shell-operator
+helm repo update
+helm install ingress-migration ingress-migration/ingress-migration-shell-operator \
+  --namespace ingress-migration-system \
+  --create-namespace \
+  --wait
+```
+
+### 5. Deploy the demo app and Ingress
+
+```bash
+kubectl apply -f demo/manifests/app.yaml
+kubectl apply -f demo/manifests/ingress.yaml
+```
+
+Confirm the Ingress is created:
+
+```bash
+kubectl get ingress -A
+```
+
+### 6. Trigger a dry-run migration
+
+```bash
+kubectl apply -f demo/manifests/trigger-apply.yaml
+```
+
+Watch the operator hook execute:
+
+```bash
+kubectl logs -n ingress-migration-system \
+  -l app.kubernetes.io/name=shell-operator --follow
+```
+
+### 7. Read the migration report
+
+```bash
+kubectl get cm migrate-ingress-demo -n demo-prod \
+  -o go-template='{{index .data "report"}}'
+```
+
+### 8. Apply for real (optional)
+
+Edit the trigger ConfigMap to set `dry-run: "false"` and re-apply:
+
+```bash
+kubectl annotate cm migrate-ingress-demo -n demo-prod \
+  ingress-migration.flant.com/dry-run="false" --overwrite
+kubectl label cm migrate-ingress-demo -n demo-prod \
+  ingress-migration.flant.com/trigger=true --overwrite
+```
+
+Then check the created HTTPRoutes and Gateways:
+
+```bash
+kubectl get httproute,gateway -A
+```
+
+### 9. Clean up
+
+```bash
+kind delete cluster --name migration-demo
+```
+
 ## Install
 
 ### Using Helm (Recommended)
