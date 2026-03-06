@@ -16,19 +16,24 @@ migration is driven by an annotated ConfigMap trigger.
 
 The [ingress-nginx controller is deprecated](https://kubernetes.github.io/ingress-nginx/) and the Kubernetes project recommends migrating to the Gateway API. This tool automates that migration.
 
-### How does it compare?
+## Comparison
 
-| Tool | Language | Trigger Model | Multi-Provider | Preflight Warnings | Audit History |
-|---|---|---|---|---|---|
-| **ingress-migration-shell-operator** *(this project)* | Bash (no Go) | **Annotated ConfigMap** — GitOps/ArgoCD-native, live-watched by shell-operator | ✅ ingress-nginx, apisix, kong, kgateway | ✅ NGINX-specific gotchas (regex paths, rewrite-target, trailing-slash redirects) | ✅ Append-only JSONL in a ConfigMap, bounded rolling window |
-| [ingress2gateway](https://github.com/kubernetes-sigs/ingress2gateway) | Go | CLI / one-shot binary | ✅ ingress-nginx, apisix, kong, kgateway, Istio, … | ❌ | ❌ |
-| [IBM iks-ingress-migration-tool](https://github.com/IBM/iks-ingress-migration-tool) | Go | CLI / one-shot binary | ❌ IBM ALB only | ❌ | ❌ |
+This project builds **on top of** [`ingress2gateway`](https://github.com/kubernetes-sigs/ingress2gateway),
+adding a Kubernetes-native, ConfigMap-driven trigger layer that turns a one-shot CLI command
+into a live operator: declare migration intent in a labeled ConfigMap, let shell-operator react,
+and get a before/after report written back into the same object — all version-controllable and
+GitOps/ArgoCD-compatible without writing a line of Go.
 
-**Unique strengths of this project:**
-- **No Go required** — the entire operator is plain Bash; easy to audit, fork, and extend without a build toolchain.
-- **ConfigMap trigger model** — declare intent in a ConfigMap annotation; shell-operator watches for the label and fires the hook automatically. Works natively with GitOps workflows.
-- **NGINX preflight scanner** — warns about patterns that `ingress2gateway` silently drops or mis-converts (regex paths with `use-regex`, `rewrite-target` capture groups, trailing-slash redirect annotations).
-- **Built-in audit trail** — every run is logged to a bounded JSONL history ConfigMap; no external log aggregator needed.
+| Feature | **ingress-migration-shell-operator** *(this project)* | [ingress2gateway](https://github.com/kubernetes-sigs/ingress2gateway) | [IBM iks-ingress-migration-tool](https://github.com/IBM/iks-ingress-migration-tool) |
+|---|---|---|---|
+| **Language** | Bash — no build toolchain required | Go | Go |
+| **Trigger model** | **Annotated ConfigMap** — label a ConfigMap; shell-operator fires the hook automatically. Fully declarative, GitOps/ArgoCD-native, version-controllable | CLI — one-shot `ingress2gateway print` command | CLI — one-shot command |
+| **Built on ingress2gateway** | ✅ Wraps `ingress2gateway` for conversion | — *(is* ingress2gateway*)* | ❌ Custom converter |
+| **Multi-provider support** | ✅ ingress-nginx, apisix, kong, kgateway | ✅ ingress-nginx, apisix, kong, kgateway, Istio, … | ❌ IBM ALB only |
+| **Preflight warnings** | ✅ NGINX-specific gotchas: `use-regex`, `rewrite-target` capture groups, trailing-slash redirects | ❌ | ❌ |
+| **Dry-run gate** | ✅ `dry-run: "true"` annotation; report written to ConfigMap | ✅ `print` subcommand (stdout only) | ❌ |
+| **Audit history** | ✅ Append-only JSONL in a ConfigMap, bounded rolling window | ❌ | ❌ |
+| **Rollback** | ✅ Dedicated rollback hook (delete applied HTTPRoutes) | ❌ | ❌ |
 
 ## Features
 
