@@ -95,6 +95,11 @@ run_migration() {
     # that is later piped to `kubectl apply -f -`.
     local _i2g_err
     _i2g_err=$(mktemp)
+    # Guarantee cleanup even if set -e triggers an unexpected early exit between
+    # mktemp and the explicit rm calls below.  RETURN fires on every exit path
+    # of this function; rm -f is a no-op if the file was already removed.
+    # shellcheck disable=SC2064
+    trap "rm -f '${_i2g_err}'" RETURN
     OUT=$("$ingress2gateway_bin" "${args[@]}" 2>"$_i2g_err") || {
         echo "Error running ingress2gateway: $(cat "$_i2g_err")"
         rm -f "$_i2g_err"
@@ -102,7 +107,17 @@ run_migration() {
         return 1
     }
     if [[ -s "$_i2g_err" ]]; then
-        echo "ingress2gateway warnings: $(cat "$_i2g_err")"
+        local _i2g_warnings
+        _i2g_warnings=$(cat "$_i2g_err")
+        echo "ingress2gateway warnings: ${_i2g_warnings}"
+        # Surface ingress2gateway stderr (annotation-drop notices, unsupported
+        # field warnings, etc.) in the migration report alongside NGINX preflight
+        # output so all conversion warnings appear together in the status ConfigMap.
+        if [[ -n "${NGINX_WARNINGS_TEXT}" ]]; then
+            NGINX_WARNINGS_TEXT+=$'\n'"${_i2g_warnings}"
+        else
+            NGINX_WARNINGS_TEXT="${_i2g_warnings}"
+        fi
     fi
     rm -f "$_i2g_err"
 
