@@ -1,0 +1,21 @@
+[
+  {
+    "code": "NGINX_REGEX_HOST_WIDE",
+    "severity": "warning",
+    "message": "Ingress-NGINX enables regex semantics for all paths of the same host across all Ingresses when any Ingress for that host uses use-regex or rewrite-target.",
+    "host": "api.example.com"
+  },
+  {
+    "code": "NGINX_REGEX_PREFIX_CASE_INSENSITIVE",
+    "severity": "warning",
+    "message": "Ingress-NGINX regex path matching is prefix-based and case-insensitive; your Gateway API controller may treat regex differently. Review regex paths carefully.",
+    "host": "api.example.com"
+  },
+  {
+    "code": "NGINX_REWRITE_TARGET_IMPLIES_REGEX",
+    "severity": "warning",
+    "message": "Ingress-NGINX rewrite-target implies regex-style path matching for the host; this can change how other paths are interpreted.",
+    "host": "api.example.com",
+    "ingress": "golden-test/api-main"
+  }
+]

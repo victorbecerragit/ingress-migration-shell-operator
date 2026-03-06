@@ -1,0 +1,70 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "IngressList",
+  "items": [
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "Ingress",
+      "metadata": {
+        "name": "api-main",
+        "namespace": "golden-test",
+        "annotations": {
+          "nginx.ingress.kubernetes.io/use-regex": "true",
+          "nginx.ingress.kubernetes.io/rewrite-target": "/$1"
+        }
+      },
+      "spec": {
+        "ingressClassName": "nginx",
+        "rules": [
+          {
+            "host": "api.example.com",
+            "http": {
+              "paths": [
+                {
+                  "path": "/api/(.+)",
+                  "pathType": "ImplementationSpecific",
+                  "backend": {
+                    "service": {
+                      "name": "api-svc",
+                      "port": { "number": 80 }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "Ingress",
+      "metadata": {
+        "name": "api-shared",
+        "namespace": "golden-test"
+      },
+      "spec": {
+        "ingressClassName": "nginx",
+        "rules": [
+          {
+            "host": "api.example.com",
+            "http": {
+              "paths": [
+                {
+                  "path": "/health",
+                  "pathType": "Prefix",
+                  "backend": {
+                    "service": {
+                      "name": "health-svc",
+                      "port": { "number": 80 }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

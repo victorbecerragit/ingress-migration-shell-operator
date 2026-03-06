@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Shellcheck Scripts
         uses: ludeeus/action-shellcheck@master
         with:
@@ -29,6 +29,58 @@ jobs:
 
       - name: Render Helm Templates
         run: helm template ci . --namespace default > /dev/null
+
+  # ── unit tests (bats, no cluster) ──────────────────────────────────────────
+  unit-tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          git clone --depth 1 https://github.com/bats-core/bats-core.git tests/.tools/bats-core
+          tests/.tools/bats-core/install.sh tests/.tools
+          echo "tests/.tools/bin" >> "$GITHUB_PATH"
+
+      - name: Run unit tests
+        run: make test-unit
+
+  # ── golden tests (nginx_gotchas scanner, no cluster) ───────────────────────
+  golden-tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run golden tests
+        run: make test-golden
+
+  # ── e2e matrix (one Kind cluster per provider) ─────────────────────────────
+  e2e:
+    needs: [lint, unit-tests, golden-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: true
+      matrix:
+        provider: [nginx, kgateway-dev, apisix, kong]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kind
+        run: |
+          KIND_VERSION=v0.22.0
+          curl -fsSL -o ./kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          kind --version
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run E2E — ${{ matrix.provider }}
+        run: make test-e2e PROVIDER=${{ matrix.provider }}
 
   build-push:
     needs: lint

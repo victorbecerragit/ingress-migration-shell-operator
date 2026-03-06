@@ -42,6 +42,14 @@ else
   kubectl create namespace "$KONG_NAMESPACE" >/dev/null
 fi
 
+# Kong Ingress Controller requires Gateway API CRDs to watch GatewayClass resources.
+# Install them BEFORE starting the controller so its informers register correctly.
+# Standard CRD bundle v1.2.1 is stable and compatible with KIC 3.x / chart 0.4.x.
+if ! kubectl get crd gatewayclasses.gateway.networking.k8s.io >/dev/null 2>&1; then
+  log "Installing Gateway API standard CRDs (v1.2.1)..."
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml >/dev/null
+fi
+
 if helm -n "$KONG_NAMESPACE" status "$KONG_RELEASE" >/dev/null 2>&1; then
   log "Kong Helm release '$KONG_RELEASE' already installed in namespace '$KONG_NAMESPACE'"
 else
