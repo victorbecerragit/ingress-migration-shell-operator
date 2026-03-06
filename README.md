@@ -315,6 +315,20 @@ kubectl get cm ingress-migration-history -n demo-prod \
 | `ingress-migration.flant.com/history-configmap` | `ingress-migration-history` | Name of the history ConfigMap |
 | `ingress-migration.flant.com/history-max-entries` | `"100"` | Rolling window size for history |
 
+## Roadmap
+
+Contributions and feedback welcome — open an issue on [GitHub](https://github.com/victorbecerragit/ingress-migration-shell-operator/issues).
+
+- [x] **NGINX warnings** — preflight scanner detects risky annotation patterns (`use-regex`, `rewrite-target`, trailing-slash redirects) before conversion and surfaces counts in the report and ConfigMap status
+- [ ] **Provider extras** — implement the post-processing stubs to preserve provider-native annotations dropped by `ingress2gateway`:
+  - `ingress-nginx` → native HTTPRoute filters (ssl-redirect, rewrite-target, use-regex, CORS, BackendLBPolicy timeouts)
+  - `kong` → `KongPlugin` CRs (rate-limiting, auth-url, proxy-body-size)
+  - `apisix` → `ApisixPluginConfig` CRs (plugin-config-name, allowlist/blocklist)
+  - `kgateway` → `RouteOption` / `VirtualHostOption` policy attachments (rate-limit, extAuth, rewrite)
+- [ ] **Rollback providers** — extend the rollback hook to also delete provider-specific CRs (`KongPlugin`, `ApisixPluginConfig`, `RouteOption`, etc.) created by the provider-extras step
+- [ ] **Webhook** — optional admission webhook to block Ingress creation once migration is complete (enforce no-new-Ingress policy)
+- [ ] **Metrics** — expose Prometheus metrics: `ingress_migration_runs_total`, `ingress_migration_httproutes_converted`, `ingress_migration_warnings_total`, `ingress_migration_errors_total`
+
 ## Testing & Development
 
 See [docs/testing.md](docs/testing.md) for unit tests, E2E tests, provider-specific test suites, and guidance on adding or modifying test fixtures.
