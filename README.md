@@ -374,7 +374,7 @@ object `{ code, severity, host, ingress, message }`.
 
 | Provider | Status | Notes |
 |---|---|---|
-| **Traefik** | Blocked upstream | `ingress2gateway` does not yet support Traefik |
+| **Traefik** | Blocked upstream | `ingress2gateway` does not yet support Traefik , but well supported by Traefik https://github.com/traefik/ingress-nginx-migration/tree/main |
 | **HAProxy** | Open | Widely deployed; no migration tooling today |
 | **Istio VirtualService** | Open | Common migration path to HTTPRoute |
 
